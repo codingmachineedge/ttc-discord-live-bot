@@ -30,7 +30,7 @@ import {
   upsertDepartureBoard,
   upsertTripFollower
 } from "./settingsStore.js";
-import { buildTripAnnouncement, makeProgressAttachment, upcomingStopOptions } from "./tripFollower.js";
+import { buildTripAnnouncement, makeTripFollowerAttachments, upcomingStopOptions } from "./tripFollower.js";
 import { findVehicleByNumber, getAlerts, getLine5Departures, getLine5Stations, getStaticGtfs, getTripStops, getVehicles } from "./ttcClient.js";
 
 async function replyChunks(interaction: any, chunks: string[], ephemeral = false): Promise<void> {
@@ -222,7 +222,7 @@ async function handleCommand(interaction: any): Promise<void> {
       const announcementChunks = chunksFromText(buildTripAnnouncement(session, vehicle, alerts));
       await interaction.reply({
         content: announcementChunks[0],
-        files: [await makeProgressAttachment(session, vehicle, stops, alerts)],
+        files: await makeTripFollowerAttachments(session, vehicle, stops, alerts),
         ephemeral: true
       });
       for (const chunk of announcementChunks.slice(1)) {
@@ -404,11 +404,14 @@ async function handleFollowDestinationSelect(interaction: any): Promise<void> {
     destinationStopSequence: stop.stopSequence
   };
   await upsertTripFollower(interaction.guildId, updated);
-  const vehicle = await findVehicleByNumber(session.vehicleLabel ?? session.vehicleNumber);
+  const [vehicle, alerts] = await Promise.all([
+    findVehicleByNumber(session.vehicleLabel ?? session.vehicleNumber),
+    getAlerts()
+  ]);
   await interaction.editReply({
     content: `Trip follower is on. I will announce next stops for <@${session.userId}> and tell you to get off at **${stop.stopName}**.`,
     components: [],
-    files: vehicle ? [await makeProgressAttachment(updated, vehicle, stops)] : []
+    files: vehicle ? await makeTripFollowerAttachments(updated, vehicle, stops, alerts) : []
   });
 }
 
@@ -564,7 +567,7 @@ async function startTripFollowerPolling(client: Client): Promise<void> {
           const stops = await getTripStops(session.tripId);
           const alerts = await getAlerts();
           await sendChunks(channel as TextChannel, [buildTripAnnouncement(session, vehicle, alerts)]);
-          await (channel as TextChannel).send({ files: [await makeProgressAttachment(session, vehicle, stops, alerts)] });
+          await (channel as TextChannel).send({ files: await makeTripFollowerAttachments(session, vehicle, stops, alerts) });
 
           if (atDestination) {
             await removeTripFollower(guild.id, session.userId);

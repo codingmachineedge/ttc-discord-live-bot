@@ -1,9 +1,12 @@
 import { AttachmentBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from "discord.js";
+import gifenc from "gifenc";
 import sharp from "sharp";
 import type { TripFollowSession } from "./settingsStore.js";
 import type { AlertSummary } from "./types.js";
 import { formatStationDetails } from "./stationDetails.js";
 import type { TripStopSummary, VehicleSummary } from "./types.js";
+
+const { applyPalette, GIFEncoder, quantize } = gifenc;
 
 export function upcomingStopOptions(stops: TripStopSummary[], currentSequence?: number): StringSelectMenuBuilder {
   let upcoming = stops
@@ -82,11 +85,25 @@ function compactDetail(value: string, maxChars = 78): string {
   return normalized.length > maxChars ? `${normalized.slice(0, maxChars - 3)}...` : normalized;
 }
 
-export async function makeProgressAttachment(session: TripFollowSession, vehicle: VehicleSummary, stops: TripStopSummary[], alerts: AlertSummary[] = []): Promise<AttachmentBuilder> {
+function line5TickerText(session: TripFollowSession, vehicle: VehicleSummary): string {
+  const nextStop = vehicle.nextStop ?? "the next station";
+  const destination = session.destinationStopName;
+  const currentSequence = vehicle.currentStopSequence ?? 0;
+  const stopsAway = Math.max(0, session.destinationStopSequence - currentSequence);
+  if (currentSequence >= session.destinationStopSequence || vehicle.nextStopId === session.destinationStopId) {
+    return `Arriving at ${destination}. This is your stop. Please exit here. / Arrivée à ${destination}. C'est votre arrêt.`;
+  }
+  if (vehicle.currentStatus === "STOPPED_AT") {
+    return `Arriving at ${vehicle.currentStop ?? nextStop}. The next station is ${nextStop}. / Arrivée à ${vehicle.currentStop ?? nextStop}. La prochaine station est ${nextStop}.`;
+  }
+  return `Please stand clear of the doors. The next station is ${nextStop}. Get off at ${destination} in about ${stopsAway} stops.`;
+}
+
+function tripMapSvg(session: TripFollowSession, vehicle: VehicleSummary, stops: TripStopSummary[], frame = 0): string {
   const currentSequence = vehicle.currentStopSequence;
   const visibleStops = routeWindow(stops, currentSequence, session.destinationStopSequence);
   const width = 1200;
-  const height = 720;
+  const height = 400;
   const left = 92;
   const right = width - 70;
   const lineY = 178;
@@ -98,11 +115,13 @@ export async function makeProgressAttachment(session: TripFollowSession, vehicle
     const x = left + spacing * index;
     const isCurrent = index === currentIndex;
     const isDestination = index === destinationIndex;
-    const fill = isDestination ? "#dc2626" : isCurrent ? "#047857" : "#ffffff";
+    const pulse = frame % 2 === 0;
+    const fill = isDestination ? (pulse ? "#ef4444" : "#dc2626") : isCurrent ? (pulse ? "#10b981" : "#047857") : "#ffffff";
     const stroke = isDestination ? "#991b1b" : isCurrent ? "#065f46" : "#334155";
+    const radius = isCurrent || isDestination ? (pulse ? 18 : 14) : 10;
     const labelLines = wrapLabel(stop.stopName, 16);
     return `
-      <circle cx="${x}" cy="${lineY}" r="${isCurrent || isDestination ? 14 : 10}" fill="${fill}" stroke="${stroke}" stroke-width="4"/>
+      <circle cx="${x}" cy="${lineY}" r="${radius}" fill="${fill}" stroke="${stroke}" stroke-width="4"/>
       ${labelLines.map((line, lineIndex) => `<text x="${x}" y="${lineY + 56 + lineIndex * 24}" text-anchor="middle" font-size="20" font-weight="800" fill="#0f172a">${escapeXml(line)}</text>`).join("\n")}
       <text x="${x}" y="${lineY + 116}" text-anchor="middle" font-size="16" fill="#475569">Stop #${stop.stopSequence}</text>`;
   }).join("\n");
@@ -113,18 +132,10 @@ export async function makeProgressAttachment(session: TripFollowSession, vehicle
   const nextStopText = escapeXml(atDestination ? "Get off now" : vehicle.nextStop ?? "next stop unavailable");
   const routeText = escapeXml(session.routeName);
   const statusText = escapeXml(formatVehicleStatus(vehicle.currentStatus));
-  const details = formatStationDetails(vehicle, alerts).slice(0, 5);
-  const detailRows = details.map((detail, index) => {
-    const [label, ...valueParts] = detail.split(":");
-    const value = compactDetail(valueParts.join(":").trim());
-    const y = 420 + index * 52;
-    return `
-      <rect x="64" y="${y - 30}" width="${width - 128}" height="42" rx="10" fill="${index % 2 === 0 ? "#e2e8f0" : "#f1f5f9"}"/>
-      <text x="88" y="${y - 4}" font-size="19" font-weight="900" fill="#334155">${escapeXml(label.toUpperCase())}</text>
-      <text x="430" y="${y - 4}" font-size="20" font-weight="800" fill="#0f172a">${escapeXml(value || "unknown")}</text>`;
-  }).join("\n");
+  const scrollText = escapeXml(line5TickerText(session, vehicle));
+  const scrollX = 1180 - frame * 90;
 
-  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+  return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <rect width="100%" height="100%" rx="22" fill="#f8fafc"/>
   <g font-family="DejaVu Sans, Arial, sans-serif">
@@ -136,7 +147,58 @@ export async function makeProgressAttachment(session: TripFollowSession, vehicle
   ${stopNodes}
   <text x="64" y="360" font-size="28" font-weight="900" fill="#0f172a">Next: ${nextStopText}</text>
   <text x="${width - 64}" y="360" font-size="28" font-weight="900" fill="#991b1b" text-anchor="end">Get off: ${destinationText}</text>
-  <text x="64" y="382" font-size="24" font-weight="900" fill="#334155">Station info</text>
+  <rect x="32" y="370" width="${width - 64}" height="30" rx="10" fill="#111827"/>
+  <text x="${scrollX}" y="392" font-size="20" font-weight="900" fill="#facc15">${scrollText}</text>
+  </g>
+</svg>`;
+}
+
+export async function makeTripMapAttachment(session: TripFollowSession, vehicle: VehicleSummary, stops: TripStopSummary[]): Promise<AttachmentBuilder> {
+  const width = 1200;
+  const height = 400;
+  const gif = GIFEncoder();
+
+  for (let frame = 0; frame < 10; frame += 1) {
+    const raw = await sharp(Buffer.from(tripMapSvg(session, vehicle, stops, frame), "utf8"))
+      .raw()
+      .ensureAlpha()
+      .toBuffer();
+    const palette = quantize(raw, 256, { format: "rgb565" });
+    const index = applyPalette(raw, palette, "rgb565");
+    gif.writeFrame(index, width, height, { palette, delay: 120, repeat: 0 });
+  }
+
+  gif.finish();
+  return new AttachmentBuilder(Buffer.from(gif.bytes()), { name: "ttc-trip-live-map.gif" });
+}
+
+export async function makeNextStopInfoAttachment(session: TripFollowSession, vehicle: VehicleSummary, alerts: AlertSummary[] = []): Promise<AttachmentBuilder> {
+  const width = 1200;
+  const height = 560;
+  const atDestination = (vehicle.currentStopSequence ?? 0) >= session.destinationStopSequence || vehicle.nextStopId === session.destinationStopId;
+  const statusText = escapeXml(formatVehicleStatus(vehicle.currentStatus));
+  const nextStop = escapeXml(atDestination ? "Get off now" : vehicle.nextStop ?? "next stop unavailable");
+  const destination = escapeXml(session.destinationStopName);
+  const details = formatStationDetails(vehicle, alerts).slice(0, 5);
+  const detailRows = details.map((detail, index) => {
+    const [label, ...valueParts] = detail.split(":");
+    const value = compactDetail(valueParts.join(":").trim(), 72);
+    const y = 242 + index * 56;
+    return `
+      <rect x="64" y="${y - 34}" width="${width - 128}" height="46" rx="12" fill="${index % 2 === 0 ? "#e2e8f0" : "#f8fafc"}"/>
+      <text x="92" y="${y - 4}" font-size="20" font-weight="900" fill="#334155">${escapeXml(label.toUpperCase())}</text>
+      <text x="448" y="${y - 4}" font-size="21" font-weight="800" fill="#0f172a">${escapeXml(value || "unknown")}</text>`;
+  }).join("\n");
+
+  const svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="100%" height="100%" rx="24" fill="#f8fafc"/>
+  <g font-family="DejaVu Sans, Arial, sans-serif">
+  <rect x="32" y="28" width="${width - 64}" height="132" rx="18" fill="#111827"/>
+  <text x="64" y="82" font-size="42" font-weight="900" fill="#ffffff">Next station: ${nextStop}</text>
+  <text x="64" y="126" font-size="28" font-weight="800" fill="#cbd5e1">Status: ${statusText}</text>
+  <text x="${width - 64}" y="126" font-size="28" font-weight="900" fill="#fecaca" text-anchor="end">Get off: ${destination}</text>
+  <text x="64" y="194" font-size="28" font-weight="900" fill="#334155">Station info</text>
   ${detailRows}
   </g>
 </svg>`;
@@ -144,7 +206,14 @@ export async function makeProgressAttachment(session: TripFollowSession, vehicle
   const png = await sharp(Buffer.from(svg, "utf8"))
     .png({ quality: 95, compressionLevel: 6 })
     .toBuffer();
-  return new AttachmentBuilder(png, { name: "ttc-trip-progress.png" });
+  return new AttachmentBuilder(png, { name: "ttc-next-stop-info.png" });
+}
+
+export async function makeTripFollowerAttachments(session: TripFollowSession, vehicle: VehicleSummary, stops: TripStopSummary[], alerts: AlertSummary[] = []): Promise<AttachmentBuilder[]> {
+  return [
+    await makeTripMapAttachment(session, vehicle, stops),
+    await makeNextStopInfoAttachment(session, vehicle, alerts)
+  ];
 }
 
 export function buildTripAnnouncement(session: TripFollowSession, vehicle: VehicleSummary, alerts: AlertSummary[] = []): string {
@@ -158,9 +227,9 @@ export function buildTripAnnouncement(session: TripFollowSession, vehicle: Vehic
   if (line5Style) {
     const script = buildLine5AnnouncerScript(session, vehicle, stopsAway);
     if (currentSequence >= session.destinationStopSequence || vehicle.nextStopId === session.destinationStopId) {
-      return `<@${session.userId}> get off at **${session.destinationStopName}**.\n\n${script}\n\n**Station details**\n${stationDetails}`;
+      return `${script}\n\n<@${session.userId}> get off at **${session.destinationStopName}** now.\n\n**Station details**\n${stationDetails}`;
     }
-    return `<@${session.userId}> Line 5 Eglinton trip follower for vehicle **${vehicleName}**.\n\n${script}\n\n**Station details**\n${stationDetails}`;
+    return `${script}\n\n<@${session.userId}> following Line 5 Eglinton vehicle **${vehicleName}**. Get off at **${session.destinationStopName}**.\n\n**Station details**\n${stationDetails}`;
   }
 
   if (currentSequence >= session.destinationStopSequence || vehicle.nextStopId === session.destinationStopId) {
@@ -187,30 +256,30 @@ function buildLine5AnnouncerScript(session: TripFollowSession, vehicle: VehicleS
   if ((vehicle.currentStopSequence ?? 0) >= session.destinationStopSequence || vehicle.nextStopId === session.destinationStopId) {
     return [
       "**Line 5-style announcer**",
-      `English: Arriving at ${destination}. This is your stop. Please exit here.`,
-      `Français : Arrivée à ${destination}. C'est votre arrêt. Veuillez descendre ici.`
+      `Arriving at ${destination}. ${destination} station. This is your stop. Please exit here.`,
+      `Arrivée à ${destination}. Station ${destination}. C'est votre arrêt. Veuillez descendre ici.`
     ].join("\n");
   }
 
   if (stopsAway === 1) {
     return [
       "**Line 5-style announcer**",
-      `English: The next station is ${nextStop}. ${destination} is the following stop. Please prepare to exit.`,
-      `Français : La prochaine station est ${nextStop}. ${destination} est l'arrêt suivant. Préparez-vous à descendre.`
+      `The next station is ${nextStop}. ${destination} is the following station. Please prepare to exit.`,
+      `La prochaine station est ${nextStop}. ${destination} est la station suivante. Préparez-vous à descendre.`
     ].join("\n");
   }
 
   if (vehicle.currentStatus === "STOPPED_AT") {
     return [
       "**Line 5-style announcer**",
-      `English: Arriving at ${vehicle.currentStop ?? nextStop}. The next station is ${nextStop}.`,
-      `Français : Arrivée à ${vehicle.currentStop ?? nextStop}. La prochaine station est ${nextStop}.`
+      `Arriving at ${vehicle.currentStop ?? nextStop}. The next station is ${nextStop}.`,
+      `Arrivée à ${vehicle.currentStop ?? nextStop}. La prochaine station est ${nextStop}.`
     ].join("\n");
   }
 
   return [
     "**Line 5-style announcer**",
-    `English: Please stand clear of the doors. The next station is ${nextStop}. Get off at ${destination} in about ${stopsAway} stops.`,
-    `Français : Veuillez vous tenir à l'écart des portes. La prochaine station est ${nextStop}. Descendez à ${destination} dans environ ${stopsAway} arrêts.`
+    `Please stand clear of the doors. The next station is ${nextStop}. Get off at ${destination} in about ${stopsAway} stops.`,
+    `Veuillez vous tenir à l'écart des portes. La prochaine station est ${nextStop}. Descendez à ${destination} dans environ ${stopsAway} arrêts.`
   ].join("\n");
 }

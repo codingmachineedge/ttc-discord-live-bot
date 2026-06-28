@@ -26,6 +26,7 @@
     "discord-api-types": "^0.38.31",
     "discord.js": "^14.22.1",
     "dotenv": "^17.2.3",
+    "gifenc": "^1.0.3",
     "gtfs-realtime-bindings": "^1.1.1",
     "node-cache": "^5.1.2",
     "sharp": "^0.35.2",
