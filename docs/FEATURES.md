@@ -29,7 +29,7 @@ Acknowledgements are rate-limited per user per server so a busy general chat is 
 
 ## Scheduled Live Test Bot
 
-The optional `ttc-live-test-bot` Compose service uses a separate `TEST_DISCORD_TOKEN`. Every 15 minutes it posts each live-test step, including an image attachment, to the general channel and then checks whether the TTC bot acknowledged recent feedback.
+The live-test script uses a separate `TEST_DISCORD_TOKEN` when run manually. It posts each live-test step, including an image attachment, to the general channel and then checks whether the TTC bot acknowledged recent feedback.
 
 ## Vehicle Lookup
 

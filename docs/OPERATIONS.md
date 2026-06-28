@@ -38,7 +38,7 @@ Copy `.env.example` to `.env` and fill in the Discord token and application ID.
 | `DISCORD_GUILD_ID` | No | empty | Recommended for one-server deployments and fast guild command registration. |
 | `ALERT_CHANNEL_ID` | No | empty | Fallback channel for alert polling if auto-created channels are unavailable. |
 | `GENERAL_CHANNEL_ID` | No | empty | Exact channel to monitor for user feedback; if empty, channels named `general` are monitored. |
-| `TEST_DISCORD_TOKEN` | No | empty | Separate test bot token for the scheduled live-test service. Keep this only in `.env`. |
+| `TEST_DISCORD_TOKEN` | No | empty | Separate test bot token for manual live-test runs. Keep this only in `.env`. |
 | `TEST_GUILD_ID` | No | empty | Optional server override for the live-test bot. |
 | `TEST_GENERAL_CHANNEL_ID` | No | empty | Optional channel override for the live-test bot. |
 | `AUTO_SETUP_CHANNELS` | No | `true` | Creates or repairs TTC channels on startup. |
@@ -70,7 +70,7 @@ The Docker image uses a multi-stage build:
 
 The Compose file mounts the named volume `ttc-cache` at `/app/.data`. This volume stores `settings.json`, including channel IDs, alert subscribers, trip followers, and Line 5 board sessions.
 
-Docker Compose also defines `ttc-live-test-bot`. If `TEST_DISCORD_TOKEN` is set, that service runs `scripts/live-test-bot.mjs` every 15 minutes and sends each test step, including an image attachment, to the general channel. If the token is not set, the service stays idle.
+Docker Compose only runs the main TTC bot. The live-test script is manual and is not scheduled.
 
 ## Verification
 

@@ -64,7 +64,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-If `TEST_DISCORD_TOKEN` is present in `.env`, Docker Compose also starts a scheduled live-test bot that posts test steps, including an image attachment, to the general channel every 15 minutes.
+The live-test script is manual only and is not scheduled by Docker Compose.
 
 ## Run Locally
 
@@ -95,7 +95,7 @@ TEST_DISCORD_TOKEN=temporary_test_bot_token npm run live-test
 | `DISCORD_GUILD_ID` | blank | Server ID for fast guild command registration. |
 | `ALERT_CHANNEL_ID` | blank | Text channel for automatic alert updates. |
 | `GENERAL_CHANNEL_ID` | blank | Optional exact channel ID for general feedback reading. If blank, channels named `general` are used. |
-| `TEST_DISCORD_TOKEN` | blank | Optional separate bot token for the scheduled live-test bot. Keep it out of Git. |
+| `TEST_DISCORD_TOKEN` | blank | Optional separate bot token for manual `npm run live-test` runs. Keep it out of Git. |
 | `TEST_GUILD_ID` | blank | Optional guild override for the live-test bot. |
 | `TEST_GENERAL_CHANNEL_ID` | blank | Optional general-channel override for the live-test bot. |
 | `AUTO_SETUP_CHANNELS` | `true` | Automatically create/update the `TTC Live` category and channels on startup. |
