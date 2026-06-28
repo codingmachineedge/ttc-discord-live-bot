@@ -143,31 +143,31 @@ function wrapSvgText(value: string, maxChars: number, maxLines: number): string[
 
 export async function makeAlertAttachment(alert: AlertSummary): Promise<AttachmentBuilder> {
   const routes = alert.affectedRoutes.length ? alert.affectedRoutes.join(", ") : "System-wide / unspecified";
-  const meta = [alert.effect, alert.cause, alert.severity].filter(Boolean).join(" / ") || "TTC SERVICE ALERT";
-  const titleLines = wrapSvgText(alert.header, 36, 3);
-  const routeLines = wrapSvgText(routes, 52, 3);
+  const meta = [alert.effect, alert.cause, alert.severity]
+    .filter((value) => value && !String(value).startsWith("UNKNOWN_"))
+    .join(" / ");
+  const titleLines = wrapSvgText(alert.header, 34, 3);
+  const routeLines = wrapSvgText(routes, 48, 3);
   const descriptionLines = wrapSvgText(alert.description || "No additional details in the TTC alert feed.", 72, 5);
   const active = alert.activePeriods.length ? alert.activePeriods.join("; ") : "Active period not specified";
 
   const textLines = [
-    ...titleLines.map((line, index) => `<text x="64" y="${110 + index * 54}" font-size="46" font-weight="900" fill="#ffffff">${escapeXml(line)}</text>`),
-    `<text x="64" y="295" font-size="26" font-weight="800" fill="#fecaca">DISRUPTION</text>`,
-    ...routeLines.map((line, index) => `<text x="64" y="${342 + index * 34}" font-size="30" font-weight="800" fill="#ffffff">${escapeXml(line)}</text>`),
-    `<text x="64" y="465" font-size="24" font-weight="800" fill="#fde68a">${escapeXml(meta)}</text>`,
+    ...titleLines.map((line, index) => `<text x="64" y="${132 + index * 56}" font-size="46" font-weight="900" fill="#ffffff">${escapeXml(line)}</text>`),
+    `<text x="64" y="312" font-size="26" font-weight="800" fill="#fecaca">DISRUPTION</text>`,
+    ...routeLines.map((line, index) => `<text x="64" y="${360 + index * 34}" font-size="30" font-weight="800" fill="#ffffff">${escapeXml(line)}</text>`),
+    meta ? `<text x="64" y="465" font-size="24" font-weight="800" fill="#fde68a">${escapeXml(meta)}</text>` : undefined,
     ...descriptionLines.map((line, index) => `<text x="64" y="${520 + index * 29}" font-size="24" fill="#e5e7eb">${escapeXml(line)}</text>`),
     `<text x="64" y="706" font-size="20" fill="#cbd5e1">${escapeXml(active)}</text>`,
     `<line x1="48" y1="744" x2="1152" y2="744" stroke="#ffffff" stroke-opacity="0.65" stroke-width="4"/>`
-  ].join("\n");
+  ].filter(Boolean).join("\n");
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="780" viewBox="0 0 1200 780">
   <rect width="1200" height="780" rx="32" fill="#7f1d1d"/>
   <rect x="28" y="28" width="1144" height="724" rx="24" fill="#111827" stroke="#ef4444" stroke-width="10"/>
-  <rect x="48" y="48" width="1104" height="54" rx="14" fill="#dc2626"/>
-  <text x="64" y="84" font-size="26" font-weight="900" fill="#ffffff">${escapeXml(meta)}</text>
-  <text x="1132" y="84" font-size="22" fill="#fee2e2" text-anchor="end">LIVE</text>
+  <rect x="48" y="48" width="1104" height="34" rx="12" fill="#dc2626"/>
+  <text x="1132" y="73" font-size="20" fill="#fee2e2" text-anchor="end">LIVE</text>
   ${textLines}
-  <text x="64" y="752" font-size="20" fill="#f8fafc">Next alert starts below the divider.</text>
 </svg>`;
 
   const png = await sharp(Buffer.from(svg, "utf8"))
