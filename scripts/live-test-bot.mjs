@@ -80,7 +80,7 @@ async function main() {
 
   const messages = await discord(`/channels/${channel.id}/messages?limit=20`);
   const acknowledgements = messages.filter((message) =>
-    message.content?.includes("read. I will treat general-channel TTC bot comments as feedback.")
+    message.content?.includes("picked up and read. Feature change, fix, or feedback acknowledged.")
   );
   console.log(JSON.stringify({
     guildId: guild.id,

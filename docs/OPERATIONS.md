@@ -70,7 +70,7 @@ The Docker image uses a multi-stage build:
 
 The Compose file mounts the named volume `ttc-cache` at `/app/.data`. This volume stores `settings.json`, including channel IDs, alert subscribers, trip followers, and Line 5 board sessions.
 
-Docker Compose also defines `ttc-live-test-bot`. If `TEST_DISCORD_TOKEN` is set, that service runs `scripts/live-test-bot.mjs` every 30 minutes and sends each test step to the general channel. If the token is not set, the service stays idle.
+Docker Compose also defines `ttc-live-test-bot`. If `TEST_DISCORD_TOKEN` is set, that service runs `scripts/live-test-bot.mjs` every 15 minutes and sends each test step to the general channel. If the token is not set, the service stays idle.
 
 ## Local Deployment
 

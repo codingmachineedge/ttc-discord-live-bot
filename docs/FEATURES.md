@@ -23,13 +23,13 @@ Discord message output is split to stay below Discord message length limits.
 
 ## General Channel Feedback
 
-The bot listens for messages in `GENERAL_CHANNEL_ID` when configured, or in channels named `general` otherwise. When it sees a message from a real user or the separate live-test bot, it replies to the author with a short acknowledgement that the message was read as TTC bot feedback. It ignores its own acknowledgement messages to avoid loops.
+The bot listens for messages in `GENERAL_CHANNEL_ID` when configured, or in channels named `general` otherwise. When it sees a message from a real user or the separate live-test bot, it replies to the author with: `picked up and read. Feature change, fix, or feedback acknowledged.` It ignores its own acknowledgement messages to avoid loops.
 
 Acknowledgements are rate-limited per user per server so a busy general chat is not flooded.
 
 ## Scheduled Live Test Bot
 
-The optional `ttc-live-test-bot` Compose service uses a separate `TEST_DISCORD_TOKEN`. Every 30 minutes it posts each live-test step to the general channel and then checks whether the TTC bot acknowledged recent feedback.
+The optional `ttc-live-test-bot` Compose service uses a separate `TEST_DISCORD_TOKEN`. Every 15 minutes it posts each live-test step to the general channel and then checks whether the TTC bot acknowledged recent feedback.
 
 ## Vehicle Lookup
 

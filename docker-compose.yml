@@ -21,7 +21,7 @@ services:
       fi;
       while true; do
         node scripts/live-test-bot.mjs || true;
-        sleep 1800;
+        sleep 900;
       done'
 
 volumes:

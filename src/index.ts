@@ -80,7 +80,7 @@ async function handleGeneralFeedbackMessage(message: Message): Promise<void> {
     return;
   }
   feedbackAcknowledgements.set(key, now);
-  await message.reply(`<@${message.author.id}> read. I will treat general-channel TTC bot comments as feedback.`);
+  await message.reply(`<@${message.author.id}> picked up and read. Feature change, fix, or feedback acknowledged.`);
 }
 
 async function handleCommand(interaction: any): Promise<void> {
