@@ -133,7 +133,7 @@ function tripMapSvg(session: TripFollowSession, vehicle: VehicleSummary, stops: 
   const routeText = escapeXml(session.routeName);
   const statusText = escapeXml(formatVehicleStatus(vehicle.currentStatus));
   const scrollText = escapeXml(line5TickerText(session, vehicle));
-  const scrollX = 1180 - frame * 90;
+  const scrollX = 1180 - frame * 34;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
@@ -165,7 +165,7 @@ export async function makeTripMapAttachment(session: TripFollowSession, vehicle:
       .toBuffer();
     const palette = quantize(raw, 256, { format: "rgb565" });
     const index = applyPalette(raw, palette, "rgb565");
-    gif.writeFrame(index, width, height, { palette, delay: 120, repeat: 0 });
+    gif.writeFrame(index, width, height, { palette, delay: 220, repeat: 0 });
   }
 
   gif.finish();

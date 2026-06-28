@@ -67,6 +67,14 @@ export const commandDefinitions = [
       subcommand
         .setName("start")
         .setDescription("Pick a station and direction for a live departure board.")
+    ),
+  new SlashCommandBuilder()
+    .setName("ttc-recommend")
+    .setDescription("Suggest a lower-wait trip for a known TTC travel pattern.")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("eglinton-eastbound")
+        .setDescription("Recommend from Eglinton eastbound using Line 5 and hardcoded transfer choices.")
     )
 ].map((command) => command.toJSON());
 

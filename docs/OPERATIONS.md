@@ -17,7 +17,7 @@ The bot needs these practical server permissions:
 | --- | --- |
 | View Channels | Read channel/thread context and resolve configured destinations. |
 | Send Messages | Post alerts, follower announcements, status responses, and board messages. |
-| Attach Files | Send generated SVG trip progress and Line 5 board graphics. |
+| Attach Files | Send generated PNG/GIF trip progress, alert, and Line 5 board graphics. |
 | Create Public Threads | Create live Line 5 departure board threads. |
 | Send Messages in Threads | Post and edit board content inside board threads. |
 | Manage Channels | Required only when `AUTO_SETUP_CHANNELS=true` or `/ttc-setup` is used. |
@@ -71,6 +71,16 @@ The Docker image uses a multi-stage build:
 The Compose file mounts the named volume `ttc-cache` at `/app/.data`. This volume stores `settings.json`, including channel IDs, alert subscribers, trip followers, and Line 5 board sessions.
 
 Docker Compose also defines `ttc-live-test-bot`. If `TEST_DISCORD_TOKEN` is set, that service runs `scripts/live-test-bot.mjs` every 15 minutes and sends each test step, including an image attachment, to the general channel. If the token is not set, the service stays idle.
+
+## Verification
+
+Run the local verifier before deploying changes that affect trip follower graphics or announcements:
+
+```bash
+npm test
+```
+
+The verifier renders representative Line 5 trip follower states into `.data/verification`, checks the animated map GIF and next-stop PNG dimensions/file types, and asserts the announcement text includes the expected Line 5-style English/French wording and station details.
 
 ## Local Deployment
 

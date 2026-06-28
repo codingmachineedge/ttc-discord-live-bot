@@ -31,6 +31,7 @@ import {
   upsertTripFollower
 } from "./settingsStore.js";
 import { buildTripAnnouncement, makeTripFollowerAttachments, upcomingStopOptions } from "./tripFollower.js";
+import { buildEglintonEastboundRecommendation, isEglintonEastboundRecommendationRequest } from "./tripRecommendation.js";
 import { findVehicleByNumber, getAlerts, getLine5Departures, getLine5Stations, getStaticGtfs, getTripStops, getVehicles } from "./ttcClient.js";
 
 async function replyChunks(interaction: any, chunks: string[], ephemeral = false): Promise<void> {
@@ -70,6 +71,20 @@ async function handleGeneralFeedbackMessage(message: Message): Promise<void> {
   const isConfiguredGeneral = config.GENERAL_CHANNEL_ID && message.channelId === config.GENERAL_CHANNEL_ID;
   const isNamedGeneral = "name" in message.channel && message.channel.name?.toLowerCase() === "general";
   if (!isConfiguredGeneral && !isNamedGeneral) {
+    return;
+  }
+
+  if (isEglintonEastboundRecommendationRequest(message.content)) {
+    const recommendation = await buildEglintonEastboundRecommendation(message.author.id);
+    await message.reply({
+      content: recommendation.content.slice(0, 1900),
+      files: recommendation.files
+    });
+    for (const chunk of chunksFromText(recommendation.content).slice(1)) {
+      if ("send" in message.channel) {
+        await message.channel.send(chunk);
+      }
+    }
     return;
   }
 
@@ -254,6 +269,27 @@ async function handleCommand(interaction: any): Promise<void> {
         content: "Choose the Line 5 station for the departure board.",
         components: [new ActionRowBuilder<any>().addComponents(stationMenu)]
       });
+    }
+
+    if (interaction.commandName === "ttc-recommend") {
+      if (!interaction.guildId) {
+        await interaction.reply({ content: "Run this command inside a server.", ephemeral: true });
+        return;
+      }
+      const subcommand = interaction.options.getSubcommand();
+      if (subcommand === "eglinton-eastbound") {
+        await interaction.deferReply();
+        const recommendation = await buildEglintonEastboundRecommendation(interaction.user.id);
+        const chunks = chunksFromText(recommendation.content);
+        await interaction.editReply({
+          content: chunks[0],
+          files: recommendation.files
+        });
+        for (const chunk of chunks.slice(1)) {
+          await interaction.followUp(chunk);
+        }
+        return;
+      }
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
