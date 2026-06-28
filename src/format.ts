@@ -77,6 +77,35 @@ export function formatAlerts(alerts: AlertSummary[]): string[] {
   });
 }
 
+export function formatAlertCard(alert: AlertSummary): string {
+  const routes = alert.affectedRoutes.length ? alert.affectedRoutes.join(", ") : "system-wide/unspecified";
+  const meta = [alert.effect, alert.cause, alert.severity].filter(Boolean).join(", ");
+  const active = alert.activePeriods.length ? `\n**Active:** ${alert.activePeriods.join("; ")}` : "";
+  const description = alert.description ? `\n${alert.description}` : "";
+  return [
+    `# ${alert.header}`,
+    `# Disruption: ${routes}`,
+    meta ? `**Type:** ${meta}` : undefined,
+    description.trim() ? `**Details:**${description}` : undefined,
+    active.trim() ? active : undefined,
+    "\n---"
+  ].filter(Boolean).join("\n");
+}
+
+export function alertCategory(alert: AlertSummary): "subwayLrt" | "busStreetcar" | "accessibility" | "general" {
+  const text = `${alert.header} ${alert.description} ${alert.affectedRoutes.join(" ")}`.toLowerCase();
+  if (/\b(elevator|escalator|accessible|accessibility|washroom|wheel-trans)\b/.test(text)) {
+    return "accessibility";
+  }
+  if (/\b(line 1|line 2|line 3|line 4|line 5|line 6|subway|lrt|eglinton|finch west|yonge|bloor|danforth|sheppard|scarborough)\b/.test(text)) {
+    return "subwayLrt";
+  }
+  if (/\b(bus|streetcar|express|replacement bus)\b/.test(text) || /\b\d{1,3}[A-Z]?\b/.test(alert.affectedRoutes.join(" "))) {
+    return "busStreetcar";
+  }
+  return "general";
+}
+
 export function alertFingerprint(alerts: AlertSummary[]): string {
   return JSON.stringify(alerts.map((alert) => ({
     id: alert.id,

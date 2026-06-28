@@ -11,8 +11,10 @@ A Dockerized Discord bot that tracks live TTC GTFS-Realtime service alerts, dela
 - Current stop, next stop, ETA, scheduled time, and delay when present in TTC GTFS-Realtime/static GTFS.
 - Optional alert polling to a Discord text channel whenever alert state changes.
 - Automatic Discord setup for a `TTC Live` category with `ttc-alerts`, `ttc-vehicles`, and `ttc-status` channels.
+- Categorized alert channels for subway/LRT, bus/streetcar, accessibility, and general alerts.
 - Per-user service alert ping settings.
 - Real-time trip follower that asks for your vehicle number, lets you choose a get-off stop, announces stop progress, and posts an SVG route progress graphic.
+- Live Line 5 departure board threads with a large graphic that keeps editing in place.
 - Line 5 Eglinton trip follower messages include a Line 5-style English/French announcer script for next-stop, doors-closing/departure, and get-off reminders.
 - Rail/LRT trip follower messages include next-station details for door side, elevators, escalators, washrooms, and station depth when the bot has a configured or inferred value.
 
@@ -31,6 +33,7 @@ The bot uses TTC's public GTFS-Realtime feeds and Toronto Open Data's static GTF
 - `/ttc-follow start` - enter your current vehicle number, choose your destination stop, and start stop-by-stop reminders.
 - `/ttc-follow status` - show your current trip follower state with a route graphic.
 - `/ttc-follow stop` - stop following your current trip.
+- `/ttc-line5-board start` - pick a Line 5 station and direction, then create a thread with a live-updating departure board.
 
 ## Setup
 
@@ -92,6 +95,8 @@ npm run dev
 - The bot does not need a database. It caches TTC feed responses in memory and downloads static GTFS on startup.
 - User ping settings and auto-created channel IDs are stored in `.data/settings.json`. The Docker Compose file persists this with the `ttc-cache` named volume.
 - Trip follower sessions are also stored in `.data/settings.json`, so a container restart does not forget active followers.
+- Line 5 departure-board sessions are stored in `.data/settings.json` and keep editing the same message in their thread.
+- Dynamic bot messages are split before Discord's 2000-character limit.
 - Static GTFS is used for route names, stop names, scheduled stop times, and next-stop fallback.
 - Live ETA/delay comes from TTC trip updates when available.
 - Trip follower announcements depend on TTC publishing the entered vehicle in the realtime vehicle feed with an active `trip_id` and stop sequence.

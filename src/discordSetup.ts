@@ -7,7 +7,27 @@ const channelDefinitions = [
   {
     key: "alertsChannelId",
     name: "ttc-alerts",
-    topic: "Live TTC service alerts, delays, disruptions, and optional user pings."
+    topic: "All live TTC service alerts, delays, disruptions, and optional user pings."
+  },
+  {
+    key: "subwayLrtAlertsChannelId",
+    name: "ttc-alerts-subway-lrt",
+    topic: "TTC subway and LRT alerts routed by the bot."
+  },
+  {
+    key: "busStreetcarAlertsChannelId",
+    name: "ttc-alerts-bus-streetcar",
+    topic: "TTC bus and streetcar alerts routed by the bot."
+  },
+  {
+    key: "accessibilityAlertsChannelId",
+    name: "ttc-alerts-accessibility",
+    topic: "TTC elevator, escalator, accessibility, and washroom alerts routed by the bot."
+  },
+  {
+    key: "generalAlertsChannelId",
+    name: "ttc-alerts-general",
+    topic: "TTC alerts that do not fit a more specific alert channel."
   },
   {
     key: "vehiclesChannelId",
@@ -26,6 +46,10 @@ export async function ensureTtcChannels(guild: Guild): Promise<{
   alertsChannelId: string;
   vehiclesChannelId: string;
   statusChannelId: string;
+  subwayLrtAlertsChannelId: string;
+  busStreetcarAlertsChannelId: string;
+  accessibilityAlertsChannelId: string;
+  generalAlertsChannelId: string;
 }> {
   const me = guild.members.me ?? await guild.members.fetchMe();
   const permissions = me.permissions;
@@ -73,6 +97,10 @@ export async function ensureTtcChannels(guild: Guild): Promise<{
     categoryId: string;
     alertsChannelId: string;
     vehiclesChannelId: string;
-    statusChannelId: string;
+  statusChannelId: string;
+  subwayLrtAlertsChannelId: string;
+  busStreetcarAlertsChannelId: string;
+  accessibilityAlertsChannelId: string;
+  generalAlertsChannelId: string;
   };
 }

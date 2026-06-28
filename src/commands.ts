@@ -59,6 +59,14 @@ export const commandDefinitions = [
       subcommand
         .setName("status")
         .setDescription("Show your current trip follower status.")
+    ),
+  new SlashCommandBuilder()
+    .setName("ttc-line5-board")
+    .setDescription("Create a live Line 5 Eglinton departure board thread.")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("start")
+        .setDescription("Pick a station and direction for a live departure board.")
     )
 ].map((command) => command.toJSON());
 

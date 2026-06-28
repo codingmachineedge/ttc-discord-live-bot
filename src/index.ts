@@ -5,6 +5,8 @@ import {
   Events,
   GatewayIntentBits,
   ModalBuilder,
+  StringSelectMenuBuilder,
+  StringSelectMenuOptionBuilder,
   TextChannel,
   TextInputBuilder,
   TextInputStyle
@@ -12,18 +14,21 @@ import {
 import { config, trackedRouteShortNames } from "./config.js";
 import { registerCommands } from "./commands.js";
 import { ensureTtcChannels } from "./discordSetup.js";
-import { alertFingerprint, chunkMessages, formatAlerts, formatVehicles } from "./format.js";
+import { alertCategory, alertFingerprint, chunkMessages, formatAlertCard, formatAlerts, formatVehicles } from "./format.js";
+import { formatDepartureBoardText, makeDepartureBoardAttachment } from "./departureBoard.js";
 import {
   formatMentions,
   getGuildSettings,
   removeTripFollower,
   setAlertSubscription,
   TripFollowSession,
+  removeDepartureBoard,
   updateTripFollower,
+  upsertDepartureBoard,
   upsertTripFollower
 } from "./settingsStore.js";
 import { buildTripAnnouncement, makeProgressAttachment, upcomingStopOptions } from "./tripFollower.js";
-import { findVehicleByNumber, getAlerts, getStaticGtfs, getTripStops, getVehicles } from "./ttcClient.js";
+import { findVehicleByNumber, getAlerts, getLine5Departures, getLine5Stations, getStaticGtfs, getTripStops, getVehicles } from "./ttcClient.js";
 
 async function replyChunks(interaction: any, chunks: string[], ephemeral = false): Promise<void> {
   const [first, ...rest] = chunks;
@@ -37,6 +42,20 @@ async function sendChunks(channel: TextChannel, chunks: string[]): Promise<void>
   for (const chunk of chunks) {
     await channel.send(chunk);
   }
+}
+
+function chunksFromText(text: string): string[] {
+  const chunks: string[] = [];
+  let remaining = text;
+  while (remaining.length > 1900) {
+    const splitAt = Math.max(remaining.lastIndexOf("\n", 1900), 1);
+    chunks.push(remaining.slice(0, splitAt).trimEnd());
+    remaining = remaining.slice(splitAt).trimStart();
+  }
+  if (remaining.trim()) {
+    chunks.push(remaining.trimEnd());
+  }
+  return chunks;
 }
 
 async function handleCommand(interaction: any): Promise<void> {
@@ -180,6 +199,32 @@ async function handleCommand(interaction: any): Promise<void> {
         files: [makeProgressAttachment(session, vehicle, stops)],
         ephemeral: true
       });
+      return;
+    }
+
+    if (interaction.commandName === "ttc-line5-board") {
+      if (!interaction.guildId) {
+        await interaction.reply({ content: "Run this command inside a server.", ephemeral: true });
+        return;
+      }
+      await interaction.deferReply({ ephemeral: true });
+      const stations = await getLine5Stations();
+      if (!stations.length) {
+        await interaction.editReply("Line 5 stations were not found in the current TTC static GTFS.");
+        return;
+      }
+      const stationMenu = new StringSelectMenuBuilder()
+        .setCustomId("line5-board-station")
+        .setPlaceholder("Select a Line 5 station")
+        .addOptions(stations.slice(0, 25).map((station) =>
+          new StringSelectMenuOptionBuilder()
+            .setLabel(station.stopName.slice(0, 100))
+            .setValue(`${station.stopId}|${station.stopName}`.slice(0, 100))
+        ));
+      await interaction.editReply({
+        content: "Choose the Line 5 station for the departure board.",
+        components: [new ActionRowBuilder<any>().addComponents(stationMenu)]
+      });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -189,6 +234,62 @@ async function handleCommand(interaction: any): Promise<void> {
       await interaction.reply({ content: `TTC feed error: ${message}`, ephemeral: true });
     }
   }
+}
+
+async function handleLine5BoardStationSelect(interaction: any): Promise<void> {
+  if (!interaction.isStringSelectMenu() || interaction.customId !== "line5-board-station") {
+    return;
+  }
+  const [stopId, stationName] = interaction.values[0].split("|");
+  const directionMenu = new StringSelectMenuBuilder()
+    .setCustomId(`line5-board-direction:${stopId}:${stationName}`)
+    .setPlaceholder("Select direction")
+    .addOptions(
+      new StringSelectMenuOptionBuilder().setLabel("Eastbound to Kennedy").setValue("eastbound"),
+      new StringSelectMenuOptionBuilder().setLabel("Westbound to Mount Dennis").setValue("westbound")
+    );
+  await interaction.update({
+    content: `Station selected: **${stationName}**. Choose direction.`,
+    components: [new ActionRowBuilder<any>().addComponents(directionMenu)]
+  });
+}
+
+async function handleLine5BoardDirectionSelect(interaction: any): Promise<void> {
+  if (!interaction.isStringSelectMenu() || !interaction.customId.startsWith("line5-board-direction:")) {
+    return;
+  }
+  if (!interaction.guildId || !interaction.channel || !("threads" in interaction.channel)) {
+    await interaction.reply({ content: "Run this in a server text channel where the bot can create threads.", ephemeral: true });
+    return;
+  }
+  await interaction.deferUpdate();
+  const [, stopId, stationName] = interaction.customId.split(":");
+  const direction = interaction.values[0] as "eastbound" | "westbound";
+  const thread = await interaction.channel.threads.create({
+    name: `Line 5 ${stationName} ${direction}`,
+    autoArchiveDuration: 60,
+    reason: "Live Line 5 departure board"
+  });
+  const session = {
+    channelId: interaction.channelId,
+    threadId: thread.id,
+    messageId: "",
+    stationStopId: stopId,
+    stationName,
+    direction,
+    createdByUserId: interaction.user.id,
+    createdAt: new Date().toISOString()
+  };
+  const vehicles = await getLine5Departures(stopId, direction);
+  const message = await thread.send({
+    content: formatDepartureBoardText(session, vehicles),
+    files: [makeDepartureBoardAttachment(session, vehicles)]
+  });
+  await upsertDepartureBoard(interaction.guildId, { ...session, messageId: message.id });
+  await interaction.editReply({
+    content: `Created live Line 5 departure board thread: <#${thread.id}>`,
+    components: []
+  });
 }
 
 async function handleFollowVehicleModal(interaction: any): Promise<void> {
@@ -288,29 +389,73 @@ async function startAlertPolling(client: Client): Promise<void> {
         return;
       }
       const guildSettings = await getGuildSettings(guild.id);
-      const alertChannelId = guildSettings.alertsChannelId || config.ALERT_CHANNEL_ID;
-      if (!alertChannelId) {
-        return;
-      }
-
-      const channel = await client.channels.fetch(alertChannelId);
-      if (!channel || channel.type === ChannelType.DM || !("send" in channel)) {
-        console.error(`Configured alert channel ${alertChannelId} is not a text channel.`);
-        return;
-      }
       const alerts = await getAlerts();
       const fingerprint = alertFingerprint(alerts);
       if (fingerprint !== lastFingerprint) {
         lastFingerprint = fingerprint;
         const mentions = formatMentions(guildSettings.alertSubscriberIds);
-        const heading = mentions ? `**TTC Alert Update**\n${mentions}` : "**TTC Alert Update**";
-        await sendChunks(channel as TextChannel, chunkMessages(formatAlerts(alerts), heading));
+        const categoryChannels = {
+          subwayLrt: guildSettings.subwayLrtAlertsChannelId,
+          busStreetcar: guildSettings.busStreetcarAlertsChannelId,
+          accessibility: guildSettings.accessibilityAlertsChannelId,
+          general: guildSettings.generalAlertsChannelId
+        };
+        const grouped = new Map<string, string[]>();
+        for (const alert of alerts) {
+          const key = alertCategory(alert);
+          const channelId = categoryChannels[key] || guildSettings.alertsChannelId || config.ALERT_CHANNEL_ID;
+          if (!channelId) {
+            continue;
+          }
+          const cards = grouped.get(channelId) ?? [];
+          cards.push(formatAlertCard(alert));
+          grouped.set(channelId, cards);
+        }
+
+        for (const [channelId, cards] of grouped) {
+          const channel = await client.channels.fetch(channelId);
+          if (!channel || channel.type === ChannelType.DM || !("send" in channel)) {
+            continue;
+          }
+          const body = `${mentions ? `${mentions}\n` : ""}${cards.join("\n")}`;
+          await sendChunks(channel as TextChannel, chunksFromText(body));
+        }
       }
     } catch (error) {
       console.error("Alert polling failed", error);
     }
   };
 
+  await poll();
+  setInterval(poll, config.POLL_INTERVAL_SECONDS * 1000);
+}
+
+async function startDepartureBoardPolling(client: Client): Promise<void> {
+  const poll = async () => {
+    const guilds = config.DISCORD_GUILD_ID
+      ? [await client.guilds.fetch(config.DISCORD_GUILD_ID)]
+      : [...client.guilds.cache.values()];
+    for (const guild of guilds) {
+      const settings = await getGuildSettings(guild.id);
+      for (const board of settings.departureBoards ?? []) {
+        try {
+          const thread = await client.channels.fetch(board.threadId);
+          if (!thread || !("messages" in thread)) {
+            await removeDepartureBoard(guild.id, board.threadId);
+            continue;
+          }
+          const message = await thread.messages.fetch(board.messageId);
+          const vehicles = await getLine5Departures(board.stationStopId, board.direction);
+          await message.edit({
+            content: formatDepartureBoardText(board, vehicles),
+            files: [makeDepartureBoardAttachment(board, vehicles)]
+          });
+        } catch (error) {
+          console.error(`Departure board update failed for ${board.threadId}`, error);
+        }
+      }
+    }
+  };
   await poll();
   setInterval(poll, config.POLL_INTERVAL_SECONDS * 1000);
 }
@@ -391,6 +536,7 @@ async function main(): Promise<void> {
     }
     await startAlertPolling(client);
     await startTripFollowerPolling(client);
+    await startDepartureBoardPolling(client);
   });
 
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -399,7 +545,13 @@ async function main(): Promise<void> {
     } else if (interaction.isModalSubmit()) {
       await handleFollowVehicleModal(interaction);
     } else if (interaction.isStringSelectMenu()) {
-      await handleFollowDestinationSelect(interaction);
+      if (interaction.customId === "ttc-follow-destination") {
+        await handleFollowDestinationSelect(interaction);
+      } else if (interaction.customId === "line5-board-station") {
+        await handleLine5BoardStationSelect(interaction);
+      } else if (interaction.customId.startsWith("line5-board-direction:")) {
+        await handleLine5BoardDirectionSelect(interaction);
+      }
     }
   });
   await client.login(config.DISCORD_TOKEN);

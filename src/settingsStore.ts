@@ -4,10 +4,15 @@ import { dirname, resolve } from "node:path";
 export type GuildSettings = {
   categoryId?: string;
   alertsChannelId?: string;
+  subwayLrtAlertsChannelId?: string;
+  busStreetcarAlertsChannelId?: string;
+  accessibilityAlertsChannelId?: string;
+  generalAlertsChannelId?: string;
   vehiclesChannelId?: string;
   statusChannelId?: string;
   alertSubscriberIds: string[];
   tripFollowers?: TripFollowSession[];
+  departureBoards?: DepartureBoardSession[];
 };
 
 export type TripFollowSession = {
@@ -24,6 +29,17 @@ export type TripFollowSession = {
   destinationStopSequence: number;
   lastAnnouncedStopSequence?: number;
   lastVehicleStatus?: string;
+  createdAt: string;
+};
+
+export type DepartureBoardSession = {
+  channelId: string;
+  threadId: string;
+  messageId: string;
+  stationStopId: string;
+  stationName: string;
+  direction: "eastbound" | "westbound";
+  createdByUserId: string;
   createdAt: string;
 };
 
@@ -59,6 +75,7 @@ export async function getGuildSettings(guildId: string): Promise<GuildSettings> 
   settings.guilds[guildId] ??= { alertSubscriberIds: [] };
   settings.guilds[guildId].alertSubscriberIds ??= [];
   settings.guilds[guildId].tripFollowers ??= [];
+  settings.guilds[guildId].departureBoards ??= [];
   return settings.guilds[guildId];
 }
 
@@ -69,7 +86,8 @@ export async function updateGuildSettings(guildId: string, patch: Partial<GuildS
     ...current,
     ...patch,
     alertSubscriberIds: patch.alertSubscriberIds ?? current.alertSubscriberIds ?? [],
-    tripFollowers: patch.tripFollowers ?? current.tripFollowers ?? []
+    tripFollowers: patch.tripFollowers ?? current.tripFollowers ?? [],
+    departureBoards: patch.departureBoards ?? current.departureBoards ?? []
   };
   await writeSettings(settings);
   return settings.guilds[guildId];
@@ -108,5 +126,19 @@ export async function updateTripFollower(guildId: string, session: TripFollowSes
   const current = await getGuildSettings(guildId);
   return updateGuildSettings(guildId, {
     tripFollowers: (current.tripFollowers ?? []).map((item) => item.userId === session.userId ? session : item)
+  });
+}
+
+export async function upsertDepartureBoard(guildId: string, session: DepartureBoardSession): Promise<GuildSettings> {
+  const current = await getGuildSettings(guildId);
+  const sessions = (current.departureBoards ?? []).filter((item) => item.threadId !== session.threadId);
+  sessions.push(session);
+  return updateGuildSettings(guildId, { departureBoards: sessions });
+}
+
+export async function removeDepartureBoard(guildId: string, threadId: string): Promise<GuildSettings> {
+  const current = await getGuildSettings(guildId);
+  return updateGuildSettings(guildId, {
+    departureBoards: (current.departureBoards ?? []).filter((item) => item.threadId !== threadId)
   });
 }

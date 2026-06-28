@@ -172,6 +172,61 @@ export async function getTripStops(tripId: string): Promise<TripStopSummary[]> {
   }));
 }
 
+export async function getLine5Stations(): Promise<TripStopSummary[]> {
+  const staticGtfs = await getStaticGtfs();
+  const line5 = staticGtfs.routesByShortName.get("5");
+  if (!line5) {
+    return [];
+  }
+  const trip = [...staticGtfs.trips.values()].find((item) => item.routeId === line5.id);
+  if (!trip) {
+    return [];
+  }
+  const seen = new Set<string>();
+  return (staticGtfs.stopTimesByTrip.get(trip.id) ?? [])
+    .map((stopTime) => ({
+      stopId: stopTime.stopId,
+      stopName: staticGtfs.stops.get(stopTime.stopId)?.name ?? stopTime.stopId,
+      stopSequence: stopTime.stopSequence,
+      scheduledTime: stopTime.arrivalTime || stopTime.departureTime
+    }))
+    .filter((stop) => {
+      if (seen.has(stop.stopId)) {
+        return false;
+      }
+      seen.add(stop.stopId);
+      return true;
+    })
+    .slice(0, 25);
+}
+
+export async function getLine5Departures(stopId: string, direction: "eastbound" | "westbound"): Promise<VehicleSummary[]> {
+  const vehicles = await getVehicleSummaries({ routeShortName: "5", trackedOnly: true });
+  const matches: VehicleSummary[] = [];
+  for (const vehicle of vehicles) {
+    if (!vehicle.tripId) {
+      continue;
+    }
+    const stops = await getTripStops(vehicle.tripId);
+    const target = stops.find((stop) => stop.stopId === stopId);
+    if (!target) {
+      continue;
+    }
+    const headsign = vehicle.headsign?.toLowerCase() ?? "";
+    const directionMatches = direction === "eastbound"
+      ? /east|kennedy/.test(headsign)
+      : /west|mount dennis/.test(headsign);
+    if (!directionMatches && headsign) {
+      continue;
+    }
+    const current = vehicle.currentStopSequence ?? 0;
+    if (current <= target.stopSequence) {
+      matches.push(vehicle);
+    }
+  }
+  return matches.sort((a, b) => (a.eta?.getTime() ?? Infinity) - (b.eta?.getTime() ?? Infinity)).slice(0, 6);
+}
+
 export async function getAlerts(): Promise<AlertSummary[]> {
   const [staticGtfs, alertFeed] = await Promise.all([
     getStaticGtfs(),
