@@ -78,6 +78,7 @@ Stored guild data includes:
 
 - Auto-created channel IDs.
 - Alert subscriber user IDs.
+- Posted alert message records for active alert deletion.
 - Active trip follower sessions.
 - Active Line 5 departure board sessions.
 

@@ -134,6 +134,7 @@ The settings file contains per-guild records for:
 
 - TTC category and channel IDs.
 - Alert subscriber user IDs.
+- Posted alert message IDs for active service alerts.
 - Trip follower sessions.
 - Line 5 departure board sessions.
 

@@ -15,16 +15,18 @@ import {
 import { config, trackedRouteShortNames } from "./config.js";
 import { registerCommands } from "./commands.js";
 import { ensureTtcChannels } from "./discordSetup.js";
-import { alertCategory, alertFingerprint, chunkMessages, formatAlertCard, formatAlerts, formatVehicles } from "./format.js";
+import { alertCategory, chunkMessages, formatAlerts, formatVehicles, makeAlertAttachment, singleAlertFingerprint } from "./format.js";
 import { formatDepartureBoardText, makeDepartureBoardAttachment } from "./departureBoard.js";
 import {
   formatMentions,
   getGuildSettings,
+  removeAlertPosts,
   removeTripFollower,
   setAlertSubscription,
   TripFollowSession,
   removeDepartureBoard,
   updateTripFollower,
+  upsertAlertPost,
   upsertDepartureBoard,
   upsertTripFollower
 } from "./settingsStore.js";
@@ -411,7 +413,6 @@ async function handleFollowDestinationSelect(interaction: any): Promise<void> {
 }
 
 async function startAlertPolling(client: Client): Promise<void> {
-  const lastFingerprints = new Map<string, string>();
   const poll = async () => {
     const guilds = config.DISCORD_GUILD_ID
       ? [await client.guilds.fetch(config.DISCORD_GUILD_ID)]
@@ -420,36 +421,71 @@ async function startAlertPolling(client: Client): Promise<void> {
       try {
         const guildSettings = await getGuildSettings(guild.id);
         const alerts = await getAlerts();
-        const fingerprint = alertFingerprint(alerts);
-        if (fingerprint !== lastFingerprints.get(guild.id)) {
-          lastFingerprints.set(guild.id, fingerprint);
-          const mentions = formatMentions(guildSettings.alertSubscriberIds);
-          const categoryChannels = {
-            subwayLrt: guildSettings.subwayLrtAlertsChannelId,
-            busStreetcar: guildSettings.busStreetcarAlertsChannelId,
-            accessibility: guildSettings.accessibilityAlertsChannelId,
-            general: guildSettings.generalAlertsChannelId
-          };
-          const grouped = new Map<string, string[]>();
-          for (const alert of alerts) {
-            const key = alertCategory(alert);
-            const channelId = categoryChannels[key] || guildSettings.alertsChannelId || config.ALERT_CHANNEL_ID;
-            if (!channelId) {
-              continue;
+        const activeIds = new Set(alerts.map((alert) => alert.id));
+        const existingPosts = guildSettings.alertPosts ?? [];
+        const resolvedPosts = existingPosts.filter((post) => !activeIds.has(post.alertId));
+        for (const post of resolvedPosts) {
+          try {
+            const channel = await client.channels.fetch(post.channelId);
+            if (channel && "messages" in channel) {
+              const message = await channel.messages.fetch(post.messageId);
+              await message.delete();
             }
-            const cards = grouped.get(channelId) ?? [];
-            cards.push(formatAlertCard(alert));
-            grouped.set(channelId, cards);
+          } catch (error) {
+            console.error(`Failed to delete resolved alert ${post.alertId}`, error);
+          }
+        }
+        if (resolvedPosts.length) {
+          await removeAlertPosts(guild.id, resolvedPosts.map((post) => post.alertId));
+        }
+
+        const mentions = formatMentions(guildSettings.alertSubscriberIds);
+        const categoryChannels = {
+          subwayLrt: guildSettings.subwayLrtAlertsChannelId,
+          busStreetcar: guildSettings.busStreetcarAlertsChannelId,
+          accessibility: guildSettings.accessibilityAlertsChannelId,
+          general: guildSettings.generalAlertsChannelId
+        };
+
+        for (const alert of alerts) {
+          const fingerprint = singleAlertFingerprint(alert);
+          const existing = (guildSettings.alertPosts ?? []).find((post) => post.alertId === alert.id);
+          if (existing?.fingerprint === fingerprint) {
+            continue;
           }
 
-          for (const [channelId, cards] of grouped) {
-            const channel = await client.channels.fetch(channelId);
-            if (!channel || channel.type === ChannelType.DM || !("send" in channel)) {
-              continue;
+          if (existing) {
+            try {
+              const oldChannel = await client.channels.fetch(existing.channelId);
+              if (oldChannel && "messages" in oldChannel) {
+                const oldMessage = await oldChannel.messages.fetch(existing.messageId);
+                await oldMessage.delete();
+              }
+            } catch (error) {
+              console.error(`Failed to replace changed alert ${alert.id}`, error);
             }
-            const body = `${mentions ? `${mentions}\n` : ""}${cards.join("\n")}`;
-            await sendChunks(channel as TextChannel, chunksFromText(body));
           }
+
+          const key = alertCategory(alert);
+          const channelId = categoryChannels[key] || guildSettings.alertsChannelId || config.ALERT_CHANNEL_ID;
+          if (!channelId) {
+            continue;
+          }
+          const channel = await client.channels.fetch(channelId);
+          if (!channel || channel.type === ChannelType.DM || !("send" in channel)) {
+            continue;
+          }
+          const message = await (channel as TextChannel).send({
+            content: mentions ? `${mentions}\n# TTC Service Alert` : "# TTC Service Alert",
+            files: [makeAlertAttachment(alert)]
+          });
+          await upsertAlertPost(guild.id, {
+            alertId: alert.id,
+            fingerprint,
+            channelId,
+            messageId: message.id,
+            postedAt: new Date().toISOString()
+          });
         }
       } catch (error) {
         console.error(`Alert polling failed in ${guild.name}`, error);

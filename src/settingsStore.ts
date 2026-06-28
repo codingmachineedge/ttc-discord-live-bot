@@ -13,6 +13,7 @@ export type GuildSettings = {
   alertSubscriberIds: string[];
   tripFollowers?: TripFollowSession[];
   departureBoards?: DepartureBoardSession[];
+  alertPosts?: AlertPostRecord[];
 };
 
 export type TripFollowSession = {
@@ -41,6 +42,14 @@ export type DepartureBoardSession = {
   direction: "eastbound" | "westbound";
   createdByUserId: string;
   createdAt: string;
+};
+
+export type AlertPostRecord = {
+  alertId: string;
+  fingerprint: string;
+  channelId: string;
+  messageId: string;
+  postedAt: string;
 };
 
 type SettingsFile = {
@@ -78,6 +87,7 @@ async function mutateGuildSettings(guildId: string, mutate: (settings: GuildSett
     current.alertSubscriberIds ??= [];
     current.tripFollowers ??= [];
     current.departureBoards ??= [];
+    current.alertPosts ??= [];
     mutate(current);
     settings.guilds[guildId] = current;
     await writeSettings(settings);
@@ -95,6 +105,7 @@ export async function getGuildSettings(guildId: string): Promise<GuildSettings> 
   settings.guilds[guildId].alertSubscriberIds ??= [];
   settings.guilds[guildId].tripFollowers ??= [];
   settings.guilds[guildId].departureBoards ??= [];
+  settings.guilds[guildId].alertPosts ??= [];
   return settings.guilds[guildId];
 }
 
@@ -104,6 +115,7 @@ export async function updateGuildSettings(guildId: string, patch: Partial<GuildS
     current.alertSubscriberIds = patch.alertSubscriberIds ?? current.alertSubscriberIds ?? [];
     current.tripFollowers = patch.tripFollowers ?? current.tripFollowers ?? [];
     current.departureBoards = patch.departureBoards ?? current.departureBoards ?? [];
+    current.alertPosts = patch.alertPosts ?? current.alertPosts ?? [];
   });
 }
 
@@ -154,5 +166,20 @@ export async function upsertDepartureBoard(guildId: string, session: DepartureBo
 export async function removeDepartureBoard(guildId: string, threadId: string): Promise<GuildSettings> {
   return mutateGuildSettings(guildId, (current) => {
     current.departureBoards = (current.departureBoards ?? []).filter((item) => item.threadId !== threadId);
+  });
+}
+
+export async function upsertAlertPost(guildId: string, post: AlertPostRecord): Promise<GuildSettings> {
+  return mutateGuildSettings(guildId, (current) => {
+    const posts = (current.alertPosts ?? []).filter((item) => item.alertId !== post.alertId);
+    posts.push(post);
+    current.alertPosts = posts;
+  });
+}
+
+export async function removeAlertPosts(guildId: string, alertIds: string[]): Promise<GuildSettings> {
+  const removeIds = new Set(alertIds);
+  return mutateGuildSettings(guildId, (current) => {
+    current.alertPosts = (current.alertPosts ?? []).filter((item) => !removeIds.has(item.alertId));
   });
 }

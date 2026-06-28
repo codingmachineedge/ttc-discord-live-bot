@@ -63,6 +63,8 @@ The normal vehicle list is filtered to configured route short names. By default,
 
 Automatic alert polling posts only when alert state changes. The bot calculates alert changes from stable alert fields rather than posting every polling interval.
 
+Automatic alerts are posted as individual SVG alert cards. Each posted alert message ID is stored, and when an alert ID disappears from the live feed the bot deletes the corresponding Discord message.
+
 ## Alert Routing
 
 When TTC alert channels have been auto-created, alerts are routed to more specific channels:
