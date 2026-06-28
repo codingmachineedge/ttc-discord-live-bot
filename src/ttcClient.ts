@@ -2,7 +2,7 @@ import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import NodeCache from "node-cache";
 import { config, trackedRouteShortNames } from "./config.js";
 import { loadStaticGtfs } from "./staticGtfs.js";
-import type { AlertSummary, StaticGtfs, StopTimeInfo, VehicleSummary } from "./types.js";
+import type { AlertSummary, StaticGtfs, StopTimeInfo, TripStopSummary, VehicleSummary } from "./types.js";
 
 const cache = new NodeCache({ stdTTL: 20, checkperiod: 30 });
 
@@ -73,7 +73,7 @@ function realtimeStopUpdate(tripUpdate: any, sequence: number | undefined, fallb
   return updates[0];
 }
 
-export async function getVehicles(routeShortName?: string): Promise<VehicleSummary[]> {
+async function getVehicleSummaries(options: { routeShortName?: string; trackedOnly: boolean } = { trackedOnly: true }): Promise<VehicleSummary[]> {
   const [staticGtfs, vehicleFeed, tripFeed] = await Promise.all([
     getStaticGtfs(),
     fetchRealtimeFeed(config.TTC_VEHICLE_POSITIONS_URL),
@@ -95,7 +95,7 @@ export async function getVehicles(routeShortName?: string): Promise<VehicleSumma
       .map((route) => route.id)
   );
 
-  const routeFilter = routeShortName ? staticGtfs.routesByShortName.get(routeShortName) : undefined;
+  const routeFilter = options.routeShortName ? staticGtfs.routesByShortName.get(options.routeShortName) : undefined;
   const vehicles: VehicleSummary[] = [];
 
   for (const entity of vehicleFeed.entity ?? []) {
@@ -103,7 +103,7 @@ export async function getVehicles(routeShortName?: string): Promise<VehicleSumma
     const trip = vehicle?.trip;
     const position = vehicle?.position;
     const routeId = trip?.routeId;
-    if (!routeId || !trackedRouteIds.has(routeId)) {
+    if (!routeId || (options.trackedOnly && !trackedRouteIds.has(routeId))) {
       continue;
     }
     if (routeFilter && routeFilter.id !== routeId) {
@@ -126,6 +126,7 @@ export async function getVehicles(routeShortName?: string): Promise<VehicleSumma
       vehicleLabel: vehicle.vehicle?.label,
       routeId,
       routeName: route ? `${route.shortName} ${route.longName}`.trim() : routeId,
+      routeShortName: route?.shortName,
       tripId: trip?.tripId,
       headsign: tripInfo?.headsign || trip?.scheduleRelationship,
       latitude: position?.latitude,
@@ -133,7 +134,9 @@ export async function getVehicles(routeShortName?: string): Promise<VehicleSumma
       bearing: position?.bearing,
       speedKmh: typeof position?.speed === "number" ? position.speed * 3.6 : undefined,
       currentStatus: enumName(GtfsRealtimeBindings.transit_realtime.VehiclePosition.VehicleStopStatus, vehicle.currentStatus),
+      currentStopSequence: vehicle.currentStopSequence,
       currentStop: currentStop ? staticGtfs.stops.get(currentStop.stopId)?.name : undefined,
+      nextStopId,
       nextStop: nextStopId ? staticGtfs.stops.get(nextStopId)?.name : undefined,
       scheduledTime: fallbackNextStop?.arrivalTime || fallbackNextStop?.departureTime,
       eta: etaSeconds ? new Date(Number(etaSeconds) * 1000) : undefined,
@@ -143,6 +146,30 @@ export async function getVehicles(routeShortName?: string): Promise<VehicleSumma
   }
 
   return vehicles.sort((a, b) => a.routeName.localeCompare(b.routeName) || a.vehicleId.localeCompare(b.vehicleId));
+}
+
+export async function getVehicles(routeShortName?: string): Promise<VehicleSummary[]> {
+  return getVehicleSummaries({ routeShortName, trackedOnly: true });
+}
+
+export async function findVehicleByNumber(vehicleNumber: string): Promise<VehicleSummary | undefined> {
+  const normalized = vehicleNumber.trim().toLowerCase();
+  const vehicles = await getVehicleSummaries({ trackedOnly: false });
+  return vehicles.find((vehicle) =>
+    vehicle.vehicleId.toLowerCase() === normalized
+    || vehicle.vehicleLabel?.toLowerCase() === normalized
+  );
+}
+
+export async function getTripStops(tripId: string): Promise<TripStopSummary[]> {
+  const staticGtfs = await getStaticGtfs();
+  const stopTimes = staticGtfs.stopTimesByTrip.get(tripId) ?? [];
+  return stopTimes.map((stopTime) => ({
+    stopId: stopTime.stopId,
+    stopName: staticGtfs.stops.get(stopTime.stopId)?.name ?? stopTime.stopId,
+    stopSequence: stopTime.stopSequence,
+    scheduledTime: stopTime.arrivalTime || stopTime.departureTime
+  }));
 }
 
 export async function getAlerts(): Promise<AlertSummary[]> {

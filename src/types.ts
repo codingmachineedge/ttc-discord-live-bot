@@ -55,6 +55,16 @@ export type VehicleSummary = {
   eta?: Date;
   delaySeconds?: number;
   updatedAt?: Date;
+  currentStopSequence?: number;
+  nextStopId?: string;
+  routeShortName?: string;
+};
+
+export type TripStopSummary = {
+  stopId: string;
+  stopName: string;
+  stopSequence: number;
+  scheduledTime?: string;
 };
 
 export type AlertSummary = {

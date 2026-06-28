@@ -41,6 +41,24 @@ export const commandDefinitions = [
       subcommand
         .setName("view")
         .setDescription("Show your current TTC notification settings.")
+    ),
+  new SlashCommandBuilder()
+    .setName("ttc-follow")
+    .setDescription("Follow your current TTC vehicle and get stop-by-stop get-off reminders.")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("start")
+        .setDescription("Enter your vehicle number and choose where to get off.")
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("stop")
+        .setDescription("Stop following your current trip.")
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("status")
+        .setDescription("Show your current trip follower status.")
     )
 ].map((command) => command.toJSON());
 

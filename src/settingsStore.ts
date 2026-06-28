@@ -7,6 +7,24 @@ export type GuildSettings = {
   vehiclesChannelId?: string;
   statusChannelId?: string;
   alertSubscriberIds: string[];
+  tripFollowers?: TripFollowSession[];
+};
+
+export type TripFollowSession = {
+  userId: string;
+  channelId: string;
+  vehicleNumber: string;
+  vehicleId?: string;
+  vehicleLabel?: string;
+  tripId: string;
+  routeName: string;
+  routeShortName?: string;
+  destinationStopId: string;
+  destinationStopName: string;
+  destinationStopSequence: number;
+  lastAnnouncedStopSequence?: number;
+  lastVehicleStatus?: string;
+  createdAt: string;
 };
 
 type SettingsFile = {
@@ -40,6 +58,7 @@ export async function getGuildSettings(guildId: string): Promise<GuildSettings> 
   const settings = await readSettings();
   settings.guilds[guildId] ??= { alertSubscriberIds: [] };
   settings.guilds[guildId].alertSubscriberIds ??= [];
+  settings.guilds[guildId].tripFollowers ??= [];
   return settings.guilds[guildId];
 }
 
@@ -49,7 +68,8 @@ export async function updateGuildSettings(guildId: string, patch: Partial<GuildS
   settings.guilds[guildId] = {
     ...current,
     ...patch,
-    alertSubscriberIds: patch.alertSubscriberIds ?? current.alertSubscriberIds ?? []
+    alertSubscriberIds: patch.alertSubscriberIds ?? current.alertSubscriberIds ?? [],
+    tripFollowers: patch.tripFollowers ?? current.tripFollowers ?? []
   };
   await writeSettings(settings);
   return settings.guilds[guildId];
@@ -68,4 +88,25 @@ export async function setAlertSubscription(guildId: string, userId: string, enab
 
 export function formatMentions(userIds: string[]): string {
   return userIds.map((id) => `<@${id}>`).join(" ");
+}
+
+export async function upsertTripFollower(guildId: string, session: TripFollowSession): Promise<GuildSettings> {
+  const current = await getGuildSettings(guildId);
+  const sessions = (current.tripFollowers ?? []).filter((item) => item.userId !== session.userId);
+  sessions.push(session);
+  return updateGuildSettings(guildId, { tripFollowers: sessions });
+}
+
+export async function removeTripFollower(guildId: string, userId: string): Promise<GuildSettings> {
+  const current = await getGuildSettings(guildId);
+  return updateGuildSettings(guildId, {
+    tripFollowers: (current.tripFollowers ?? []).filter((item) => item.userId !== userId)
+  });
+}
+
+export async function updateTripFollower(guildId: string, session: TripFollowSession): Promise<GuildSettings> {
+  const current = await getGuildSettings(guildId);
+  return updateGuildSettings(guildId, {
+    tripFollowers: (current.tripFollowers ?? []).map((item) => item.userId === session.userId ? session : item)
+  });
 }
