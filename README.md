@@ -20,7 +20,7 @@ A Dockerized Discord bot that tracks TTC.ca service status plus TTC realtime ale
 - Rail/LRT trip follower messages include next-station details for door side, elevators, escalators, washrooms, and station depth when the bot has a configured or inferred value.
 - General-channel feedback reader that pings users back after reading TTC bot feedback in `#general` or `GENERAL_CHANNEL_ID`.
 
-The bot uses TTC.ca for the passenger-facing route status dashboard, TTC's public GTFS-Realtime feeds for structured alert/vehicle/trip data, and Toronto Open Data's static GTFS schedule. Some fields are feed-dependent: if TTC does not publish a vehicle label, next stop, ETA, or delay for a vehicle at that moment, the bot reports `n/a` instead of inventing data. TTC's public BusTime feed is officially described for buses and streetcars; the default route filter includes subway/LRT line short names so the bot will surface those vehicles if/when the configured feed contains them.
+The bot uses TTC.ca for the passenger-facing route status dashboard, TTC's public GTFS-Realtime feeds for structured alert/vehicle/trip data, Toronto Open Data's static GTFS schedule, and a Line 5-specific TransSee fallback when TTC's GTFS-Realtime route 5 feed is empty. Some fields are feed-dependent: if the configured sources do not publish a vehicle label, next stop, ETA, or delay for a vehicle at that moment, the bot reports `n/a` instead of inventing data. TTC's public BusTime feed is officially described for buses and streetcars; the default route filter includes subway/LRT line short names so the bot will surface those vehicles if/when the configured feed contains them.
 
 ## Discord Commands
 
@@ -106,6 +106,8 @@ TEST_DISCORD_TOKEN=temporary_test_bot_token npm run live-test
 | `TTC_TRIP_UPDATES_URL` | TTC public feed | GTFS-Realtime trip updates endpoint. |
 | `TTC_ALERTS_URL` | TTC public feed | GTFS-Realtime alerts endpoint. |
 | `TTC_WEBSITE_STATUS_URL` | `https://www.ttc.ca/` | TTC.ca passenger-facing status dashboard used to verify subway/LRT service status. |
+| `TRANSSEE_LINE5_ROUTE_VEHICLES_URL` | TransSee route vehicles page | Line 5 fallback vehicle source used when TTC GTFS-Realtime has no route 5 vehicles. |
+| `TRANSSEE_LINE5_PREDICT_URL_TEMPLATE` | TransSee prediction page template | Line 5 fallback station prediction source. `{stopId}` is replaced with the TTC stop ID. |
 | `TTC_STATIC_GTFS_URL` | Toronto Open Data zip | Static GTFS schedule zip. |
 
 ## Notes

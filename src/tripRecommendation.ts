@@ -389,7 +389,7 @@ export async function buildEglintonEastboundRecommendation(userId?: string): Pro
     };
     files.push(...await makeTripFollowerAttachments(session, boardingVehicle, tripStops, alerts as AlertSummary[]));
   } else {
-    lines.push("", "**Line 5 vehicle GIF**", "- Not attached because no live GTFS realtime Line 5 vehicle/trip matched the recommended destination right now.");
+    lines.push("", "**Line 5 trip map GIF**", "- The recommendation GIF is attached. The stop-by-stop Line 5 trip map is not attached because the active Line 5 fallback source does not publish a TTC GTFS trip ID for this vehicle.");
   }
 
   return {

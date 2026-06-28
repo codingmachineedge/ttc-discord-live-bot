@@ -1,6 +1,7 @@
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import NodeCache from "node-cache";
 import { config, trackedRouteShortNames } from "./config.js";
+import { getLine5FallbackDepartures, getLine5FallbackVehicles } from "./line5Realtime.js";
 import { loadStaticGtfs } from "./staticGtfs.js";
 import type { AlertSummary, StaticGtfs, StopTimeInfo, TripStopSummary, VehicleSummary } from "./types.js";
 
@@ -161,7 +162,11 @@ async function getVehicleSummaries(options: { routeShortName?: string; trackedOn
 }
 
 export async function getVehicles(routeShortName?: string): Promise<VehicleSummary[]> {
-  return getVehicleSummaries({ routeShortName, trackedOnly: !routeShortName });
+  const vehicles = await getVehicleSummaries({ routeShortName, trackedOnly: !routeShortName });
+  if (routeShortName === "5" && !vehicles.length) {
+    return getLine5FallbackVehicles(await getLine5Stations());
+  }
+  return vehicles;
 }
 
 function distanceMeters(a: { lat?: number; lon?: number }, b: { lat?: number; lon?: number }): number {
@@ -488,7 +493,11 @@ export async function getLine5Departures(stopId: string, direction: "eastbound" 
       });
     }
   }
-  return matches.sort((a, b) => (a.eta?.getTime() ?? Infinity) - (b.eta?.getTime() ?? Infinity)).slice(0, 6);
+  const realtimeMatches = matches.sort((a, b) => (a.eta?.getTime() ?? Infinity) - (b.eta?.getTime() ?? Infinity)).slice(0, 6);
+  if (!realtimeMatches.length) {
+    return getLine5FallbackDepartures(stopId, direction, await getLine5Stations());
+  }
+  return realtimeMatches;
 }
 
 export async function getAlerts(): Promise<AlertSummary[]> {
