@@ -3,6 +3,9 @@ import sharp from "sharp";
 import type { AlertSummary, VehicleSummary } from "./types.js";
 
 const discordLimit = 1900;
+const subwayLrtRouteShortNames = new Set(["1", "2", "3", "4", "5", "6"]);
+const disruptionPattern = /\b(delay|delays|delayed|detour|divert|diversion|no service|not stopping|bypassing|closed|closure|replacement bus|shuttle|suspended|reduced service|out of service|elevator|escalator|accessible|accessibility|washroom)\b/i;
+const nonServiceNoticePattern = /\b(proof of payment|look both ways|fare inspection|customer information|reminder)\b/i;
 
 export function chunkMessages(lines: string[], heading?: string): string[] {
   const chunks: string[] = [];
@@ -83,11 +86,12 @@ export function formatVehicles(vehicles: VehicleSummary[]): string[] {
 }
 
 export function formatAlerts(alerts: AlertSummary[]): string[] {
-  if (!alerts.length) {
+  const serviceAlerts = alerts.filter(isServiceDisruptionAlert);
+  if (!serviceAlerts.length) {
     return ["No active TTC service alerts found in the current GTFS-Realtime alert feed."];
   }
 
-  return alerts.map((alert) => {
+  return serviceAlerts.map((alert) => {
     const routes = alert.affectedRoutes.length ? alert.affectedRoutes.join(", ") : "system-wide/unspecified";
     const meta = [alert.effect, alert.cause, alert.severity].filter(Boolean).join(", ");
     const active = alert.activePeriods.length ? ` Active: ${alert.activePeriods.join("; ")}.` : "";
@@ -141,20 +145,159 @@ function wrapSvgText(value: string, maxChars: number, maxLines: number): string[
   return lines;
 }
 
+type AlertCardTheme = {
+  name: string;
+  background: string;
+  panel: string;
+  accent: string;
+  accentText: string;
+  border: string;
+  eyebrow: string;
+  badge?: string;
+  badgeFill?: string;
+  badgeText?: string;
+};
+
+const lineThemes: Record<string, AlertCardTheme> = {
+  "1": { name: "Line 1 Yonge-University", background: "#7c5b00", panel: "#101827", accent: "#facc15", accentText: "#111827", border: "#facc15", eyebrow: "SUBWAY SERVICE ALERT", badge: "1", badgeFill: "#facc15", badgeText: "#111827" },
+  "2": { name: "Line 2 Bloor-Danforth", background: "#14532d", panel: "#101827", accent: "#16a34a", accentText: "#ffffff", border: "#22c55e", eyebrow: "SUBWAY SERVICE ALERT", badge: "2", badgeFill: "#16a34a", badgeText: "#ffffff" },
+  "3": { name: "Line 3 Scarborough", background: "#1e3a8a", panel: "#101827", accent: "#2563eb", accentText: "#ffffff", border: "#60a5fa", eyebrow: "SUBWAY SERVICE ALERT", badge: "3", badgeFill: "#2563eb", badgeText: "#ffffff" },
+  "4": { name: "Line 4 Sheppard", background: "#581c87", panel: "#101827", accent: "#7e22ce", accentText: "#ffffff", border: "#c084fc", eyebrow: "SUBWAY SERVICE ALERT", badge: "4", badgeFill: "#7e22ce", badgeText: "#ffffff" },
+  "5": { name: "Line 5 Eglinton", background: "#9a3412", panel: "#101827", accent: "#f97316", accentText: "#111827", border: "#fb923c", eyebrow: "LRT SERVICE ALERT", badge: "5", badgeFill: "#f97316", badgeText: "#111827" },
+  "6": { name: "Line 6 Finch West", background: "#831843", panel: "#101827", accent: "#db2777", accentText: "#ffffff", border: "#f472b6", eyebrow: "LRT SERVICE ALERT", badge: "6", badgeFill: "#db2777", badgeText: "#ffffff" }
+};
+
+const accessibilityTheme: AlertCardTheme = {
+  name: "Accessibility",
+  background: "#164e63",
+  panel: "#0f172a",
+  accent: "#06b6d4",
+  accentText: "#082f49",
+  border: "#67e8f9",
+  eyebrow: "ACCESSIBILITY ALERT",
+  badge: "A",
+  badgeFill: "#06b6d4",
+  badgeText: "#082f49"
+};
+
+const generalTheme: AlertCardTheme = {
+  name: "Service",
+  background: "#7f1d1d",
+  panel: "#111827",
+  accent: "#dc2626",
+  accentText: "#ffffff",
+  border: "#ef4444",
+  eyebrow: "SERVICE ALERT"
+};
+
+function extractLineNumber(alert: AlertSummary): string | undefined {
+  const text = `${alert.header} ${alert.description} ${alert.affectedRoutes.join(" ")}`;
+  const explicit = text.match(/\bLine\s*([1-6])\b/i)?.[1];
+  if (explicit) {
+    return explicit;
+  }
+  return alert.affectedRoutes
+    .map((route) => route.match(/^([1-6])(?:\s|$)/)?.[1])
+    .find(Boolean);
+}
+
+function stationFromHeader(alert: AlertSummary): string | undefined {
+  const station = alert.header.match(/^([^:]{2,48}):/)?.[1]?.trim();
+  return station || undefined;
+}
+
+function accessibilityScope(alert: AlertSummary): string {
+  const line = alert.description.match(/\bLine\s+[1-6][^.,;]*/i)?.[0]
+    ?.replace(/\s+while\b.*$/i, "")
+    .trim();
+  const station = stationFromHeader(alert);
+  if (station && line) {
+    return `${station} station - ${line}`;
+  }
+  if (station) {
+    return `${station} station`;
+  }
+  return "Elevator / escalator status";
+}
+
+function subwayScope(alert: AlertSummary): string {
+  const lineNumber = extractLineNumber(alert);
+  if (lineNumber && lineThemes[lineNumber]) {
+    return lineThemes[lineNumber].name;
+  }
+  return "Subway / LRT service";
+}
+
+function busStreetcarScope(alert: AlertSummary): string {
+  return alert.affectedRoutes.length ? alert.affectedRoutes.join(", ") : "Surface route service";
+}
+
+function alertCardTheme(alert: AlertSummary): AlertCardTheme {
+  const category = alertCategory(alert);
+  if (category === "accessibility") {
+    return accessibilityTheme;
+  }
+  const lineNumber = extractLineNumber(alert);
+  if (lineNumber && lineThemes[lineNumber]) {
+    return lineThemes[lineNumber];
+  }
+  return generalTheme;
+}
+
+function alertScope(alert: AlertSummary): string {
+  const category = alertCategory(alert);
+  if (category === "accessibility") {
+    return accessibilityScope(alert);
+  }
+  if (category === "subwayLrt") {
+    return subwayScope(alert);
+  }
+  if (category === "busStreetcar") {
+    return busStreetcarScope(alert);
+  }
+  return "System-wide / unspecified";
+}
+
+function alertDisplayTitle(alert: AlertSummary): string {
+  const station = stationFromHeader(alert);
+  if (alertCategory(alert) === "accessibility" && station) {
+    const equipment = alert.description.match(/\b(Elevator|Escalator)[^.,;]*/i)?.[0]
+      ?.replace(/^.*?:\s*/, "")
+      .replace(/\s+between\b.*$/i, "")
+      .trim();
+    if (equipment) {
+      return `${station}: ${equipment}`;
+    }
+  }
+
+  const serviceTitle = alert.description.match(/\b(Line\s+[1-6][^:]*:\s*(?:No service|Delays?|Service suspended|Reduced service))/i)?.[0];
+  if (serviceTitle) {
+    return serviceTitle;
+  }
+
+  return alert.header;
+}
+
 export async function makeAlertAttachment(alert: AlertSummary): Promise<AttachmentBuilder> {
-  const routes = alert.affectedRoutes.length ? alert.affectedRoutes.join(", ") : "System-wide / unspecified";
+  const theme = alertCardTheme(alert);
+  const scope = alertScope(alert);
   const meta = [alert.effect, alert.cause, alert.severity]
     .filter((value) => value && !String(value).startsWith("UNKNOWN_"))
     .join(" / ");
-  const titleLines = wrapSvgText(alert.header, 34, 3);
-  const routeLines = wrapSvgText(routes, 48, 3);
-  const descriptionLines = wrapSvgText(alert.description || "No additional details in the TTC alert feed.", 72, 5);
+  const titleLines = wrapSvgText(alertDisplayTitle(alert), theme.badge ? 28 : 34, 3);
+  const scopeLines = wrapSvgText(scope, 44, 2);
+  const descriptionLines = wrapSvgText(alert.description || "No additional details in the TTC alert feed.", 76, 5);
   const active = alert.activePeriods.length ? alert.activePeriods.join("; ") : "Active period not specified";
+  const badge = theme.badge ? `
+    <circle cx="104" cy="136" r="44" fill="${theme.badgeFill}"/>
+    <text x="104" y="153" font-size="48" font-weight="900" fill="${theme.badgeText}" text-anchor="middle">${theme.badge}</text>` : "";
+  const titleX = theme.badge ? 174 : 64;
 
   const textLines = [
-    ...titleLines.map((line, index) => `<text x="64" y="${132 + index * 56}" font-size="46" font-weight="900" fill="#ffffff">${escapeXml(line)}</text>`),
-    `<text x="64" y="312" font-size="26" font-weight="800" fill="#fecaca">DISRUPTION</text>`,
-    ...routeLines.map((line, index) => `<text x="64" y="${360 + index * 34}" font-size="30" font-weight="800" fill="#ffffff">${escapeXml(line)}</text>`),
+    badge,
+    ...titleLines.map((line, index) => `<text x="${titleX}" y="${128 + index * 54}" font-size="44" font-weight="900" fill="#ffffff">${escapeXml(line)}</text>`),
+    `<text x="64" y="318" font-size="24" font-weight="900" fill="${theme.accent}">${escapeXml(theme.eyebrow)}</text>`,
+    ...scopeLines.map((line, index) => `<text x="64" y="${368 + index * 38}" font-size="34" font-weight="900" fill="#ffffff">${escapeXml(line)}</text>`),
     meta ? `<text x="64" y="465" font-size="24" font-weight="800" fill="#fde68a">${escapeXml(meta)}</text>` : undefined,
     ...descriptionLines.map((line, index) => `<text x="64" y="${520 + index * 29}" font-size="24" fill="#e5e7eb">${escapeXml(line)}</text>`),
     `<text x="64" y="706" font-size="20" fill="#cbd5e1">${escapeXml(active)}</text>`,
@@ -163,11 +306,11 @@ export async function makeAlertAttachment(alert: AlertSummary): Promise<Attachme
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="780" viewBox="0 0 1200 780">
-  <rect width="1200" height="780" rx="32" fill="#7f1d1d"/>
-  <rect x="28" y="28" width="1144" height="724" rx="24" fill="#111827" stroke="#ef4444" stroke-width="10"/>
-  <rect x="48" y="48" width="1104" height="34" rx="12" fill="#dc2626"/>
+  <rect width="1200" height="780" rx="32" fill="${theme.background}"/>
+  <rect x="28" y="28" width="1144" height="724" rx="24" fill="${theme.panel}" stroke="${theme.border}" stroke-width="10"/>
+  <rect x="48" y="48" width="1104" height="34" rx="12" fill="${theme.accent}"/>
   <g font-family="DejaVu Sans, Arial, sans-serif">
-  <text x="1132" y="73" font-size="20" fill="#fee2e2" text-anchor="end">LIVE</text>
+  <text x="1132" y="73" font-size="20" font-weight="900" fill="${theme.accentText}" text-anchor="end">LIVE</text>
   ${textLines}
   </g>
 </svg>`;
@@ -191,10 +334,17 @@ export function singleAlertFingerprint(alert: AlertSummary): string {
 
 export function alertCategory(alert: AlertSummary): "subwayLrt" | "busStreetcar" | "accessibility" | "general" {
   const text = `${alert.header} ${alert.description} ${alert.affectedRoutes.join(" ")}`.toLowerCase();
+  const affectedShortNames = alert.affectedRoutes
+    .map((route) => route.match(/^(\d{1,3}[A-Z]?)(?:\s|$)/i)?.[1]?.toUpperCase())
+    .filter(Boolean);
+
   if (/\b(elevator|escalator|accessible|accessibility|washroom|wheel-trans)\b/.test(text)) {
     return "accessibility";
   }
-  if (/\b(line 1|line 2|line 3|line 4|line 5|line 6|subway|lrt|eglinton|finch west|yonge|bloor|danforth|sheppard|scarborough)\b/.test(text)) {
+  if (
+    affectedShortNames.some((shortName) => shortName && subwayLrtRouteShortNames.has(shortName))
+    || /\b(line [1-6]|subway|lrt)\b/.test(text)
+  ) {
     return "subwayLrt";
   }
   if (/\b(bus|streetcar|express|replacement bus)\b/.test(text) || /\b\d{1,3}[A-Z]?\b/.test(alert.affectedRoutes.join(" "))) {
@@ -203,8 +353,16 @@ export function alertCategory(alert: AlertSummary): "subwayLrt" | "busStreetcar"
   return "general";
 }
 
+export function isServiceDisruptionAlert(alert: AlertSummary): boolean {
+  const text = `${alert.header} ${alert.description}`.toLowerCase();
+  if (nonServiceNoticePattern.test(text) && !disruptionPattern.test(text)) {
+    return false;
+  }
+  return disruptionPattern.test(text);
+}
+
 export function alertFingerprint(alerts: AlertSummary[]): string {
-  return JSON.stringify(alerts.map((alert) => ({
+  return JSON.stringify(alerts.filter(isServiceDisruptionAlert).map((alert) => ({
     id: alert.id,
     header: alert.header,
     description: alert.description,

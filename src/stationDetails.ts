@@ -47,8 +47,11 @@ function normalizeStationName(value: string): string {
 function statusFromAlerts(stationName: string, alerts: AlertSummary[], keyword: string): string | undefined {
   const normalized = normalizeStationName(stationName).toLowerCase();
   const matched = alerts.find((alert) => {
-    const haystack = `${alert.header} ${alert.description} ${alert.affectedRoutes.join(" ")}`.toLowerCase();
-    return haystack.includes(normalized) && haystack.includes(keyword);
+    const escapedStation = normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const header = alert.header.toLowerCase();
+    const description = alert.description.toLowerCase();
+    const stationPattern = new RegExp(`(^|[^a-z0-9])${escapedStation}\\s+(station|:)|^${escapedStation}:`);
+    return (stationPattern.test(header) || stationPattern.test(description)) && `${header} ${description}`.includes(keyword);
   });
   if (!matched) {
     return undefined;

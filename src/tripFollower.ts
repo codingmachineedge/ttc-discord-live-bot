@@ -1,4 +1,5 @@
 import { AttachmentBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from "discord.js";
+import sharp from "sharp";
 import type { TripFollowSession } from "./settingsStore.js";
 import type { AlertSummary } from "./types.js";
 import { formatStationDetails } from "./stationDetails.js";
@@ -41,14 +42,54 @@ function routeWindow(stops: TripStopSummary[], currentSequence: number | undefin
   return stops.slice(start, end);
 }
 
-export function makeProgressAttachment(session: TripFollowSession, vehicle: VehicleSummary, stops: TripStopSummary[]): AttachmentBuilder {
+function formatVehicleStatus(status: string | undefined): string {
+  if (status === "STOPPED_AT") {
+    return "Doors open";
+  }
+  if (status === "IN_TRANSIT_TO") {
+    return "Departed";
+  }
+  if (status === "INCOMING_AT") {
+    return "Arriving";
+  }
+  return "Status unavailable";
+}
+
+function wrapLabel(value: string, maxChars: number): string[] {
+  const words = value.replace(/\s+/g, " ").trim().split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+    if (lines.length === 2) {
+      break;
+    }
+  }
+  if (current && lines.length < 2) {
+    lines.push(current);
+  }
+  return lines;
+}
+
+function compactDetail(value: string, maxChars = 78): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > maxChars ? `${normalized.slice(0, maxChars - 3)}...` : normalized;
+}
+
+export async function makeProgressAttachment(session: TripFollowSession, vehicle: VehicleSummary, stops: TripStopSummary[], alerts: AlertSummary[] = []): Promise<AttachmentBuilder> {
   const currentSequence = vehicle.currentStopSequence;
   const visibleStops = routeWindow(stops, currentSequence, session.destinationStopSequence);
-  const width = 900;
-  const height = 260;
-  const left = 70;
+  const width = 1200;
+  const height = 720;
+  const left = 92;
   const right = width - 70;
-  const lineY = 112;
+  const lineY = 178;
   const spacing = visibleStops.length > 1 ? (right - left) / (visibleStops.length - 1) : 0;
   const currentIndex = visibleStops.findIndex((stop) => stop.stopSequence >= (currentSequence ?? 0));
   const destinationIndex = visibleStops.findIndex((stop) => stop.stopSequence === session.destinationStopSequence);
@@ -59,33 +100,51 @@ export function makeProgressAttachment(session: TripFollowSession, vehicle: Vehi
     const isDestination = index === destinationIndex;
     const fill = isDestination ? "#dc2626" : isCurrent ? "#047857" : "#ffffff";
     const stroke = isDestination ? "#991b1b" : isCurrent ? "#065f46" : "#334155";
-    const label = escapeXml(stop.stopName.length > 23 ? `${stop.stopName.slice(0, 20)}...` : stop.stopName);
+    const labelLines = wrapLabel(stop.stopName, 16);
     return `
       <circle cx="${x}" cy="${lineY}" r="${isCurrent || isDestination ? 14 : 10}" fill="${fill}" stroke="${stroke}" stroke-width="4"/>
-      <text x="${x}" y="${lineY + 42}" text-anchor="middle" font-size="18" fill="#0f172a">${label}</text>
-      <text x="${x}" y="${lineY + 68}" text-anchor="middle" font-size="14" fill="#475569">#${stop.stopSequence}</text>`;
+      ${labelLines.map((line, lineIndex) => `<text x="${x}" y="${lineY + 56 + lineIndex * 24}" text-anchor="middle" font-size="20" font-weight="800" fill="#0f172a">${escapeXml(line)}</text>`).join("\n")}
+      <text x="${x}" y="${lineY + 116}" text-anchor="middle" font-size="16" fill="#475569">Stop #${stop.stopSequence}</text>`;
   }).join("\n");
 
   const progressX = currentIndex >= 0 ? left + spacing * currentIndex : left;
   const destinationText = escapeXml(session.destinationStopName);
-  const nextStopText = escapeXml(vehicle.nextStop ?? "next stop unavailable");
+  const atDestination = (vehicle.currentStopSequence ?? 0) >= session.destinationStopSequence || vehicle.nextStopId === session.destinationStopId;
+  const nextStopText = escapeXml(atDestination ? "Get off now" : vehicle.nextStop ?? "next stop unavailable");
   const routeText = escapeXml(session.routeName);
-  const statusText = escapeXml(vehicle.currentStatus ?? "status unavailable");
+  const statusText = escapeXml(formatVehicleStatus(vehicle.currentStatus));
+  const details = formatStationDetails(vehicle, alerts).slice(0, 5);
+  const detailRows = details.map((detail, index) => {
+    const [label, ...valueParts] = detail.split(":");
+    const value = compactDetail(valueParts.join(":").trim());
+    const y = 420 + index * 52;
+    return `
+      <rect x="64" y="${y - 30}" width="${width - 128}" height="42" rx="10" fill="${index % 2 === 0 ? "#e2e8f0" : "#f1f5f9"}"/>
+      <text x="88" y="${y - 4}" font-size="19" font-weight="900" fill="#334155">${escapeXml(label.toUpperCase())}</text>
+      <text x="430" y="${y - 4}" font-size="20" font-weight="800" fill="#0f172a">${escapeXml(value || "unknown")}</text>`;
+  }).join("\n");
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
   <rect width="100%" height="100%" rx="22" fill="#f8fafc"/>
-  <rect x="24" y="22" width="${width - 48}" height="58" rx="12" fill="#111827"/>
-  <text x="48" y="58" font-family="Arial, sans-serif" font-size="24" fill="#ffffff" font-weight="700">${routeText} vehicle ${escapeXml(session.vehicleLabel ?? session.vehicleNumber)}</text>
-  <text x="${width - 48}" y="58" font-family="Arial, sans-serif" font-size="18" fill="#cbd5e1" text-anchor="end">${statusText}</text>
+  <g font-family="DejaVu Sans, Arial, sans-serif">
+  <rect x="32" y="28" width="${width - 64}" height="82" rx="14" fill="#111827"/>
+  <text x="64" y="78" font-size="34" fill="#ffffff" font-weight="900">${routeText} vehicle ${escapeXml(session.vehicleLabel ?? session.vehicleNumber)}</text>
+  <text x="${width - 64}" y="78" font-size="24" fill="#cbd5e1" text-anchor="end">${statusText}</text>
   <line x1="${left}" y1="${lineY}" x2="${right}" y2="${lineY}" stroke="#94a3b8" stroke-width="8" stroke-linecap="round"/>
   <line x1="${left}" y1="${lineY}" x2="${progressX}" y2="${lineY}" stroke="#0f766e" stroke-width="8" stroke-linecap="round"/>
   ${stopNodes}
-  <text x="48" y="220" font-family="Arial, sans-serif" font-size="20" fill="#0f172a">Next: ${nextStopText}</text>
-  <text x="${width - 48}" y="220" font-family="Arial, sans-serif" font-size="20" fill="#991b1b" text-anchor="end">Get off: ${destinationText}</text>
+  <text x="64" y="360" font-size="28" font-weight="900" fill="#0f172a">Next: ${nextStopText}</text>
+  <text x="${width - 64}" y="360" font-size="28" font-weight="900" fill="#991b1b" text-anchor="end">Get off: ${destinationText}</text>
+  <text x="64" y="382" font-size="24" font-weight="900" fill="#334155">Station info</text>
+  ${detailRows}
+  </g>
 </svg>`;
 
-  return new AttachmentBuilder(Buffer.from(svg, "utf8"), { name: "ttc-trip-progress.svg" });
+  const png = await sharp(Buffer.from(svg, "utf8"))
+    .png({ quality: 95, compressionLevel: 6 })
+    .toBuffer();
+  return new AttachmentBuilder(png, { name: "ttc-trip-progress.png" });
 }
 
 export function buildTripAnnouncement(session: TripFollowSession, vehicle: VehicleSummary, alerts: AlertSummary[] = []): string {

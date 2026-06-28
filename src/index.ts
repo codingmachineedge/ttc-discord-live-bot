@@ -15,7 +15,7 @@ import {
 import { config, trackedRouteShortNames } from "./config.js";
 import { registerCommands } from "./commands.js";
 import { ensureTtcChannels } from "./discordSetup.js";
-import { alertCategory, chunkMessages, formatAlerts, formatVehicles, makeAlertAttachment, singleAlertFingerprint } from "./format.js";
+import { alertCategory, chunkMessages, formatAlerts, formatVehicles, isServiceDisruptionAlert, makeAlertAttachment, singleAlertFingerprint } from "./format.js";
 import { formatDepartureBoardText, makeDepartureBoardAttachment } from "./departureBoard.js";
 import {
   formatMentions,
@@ -222,7 +222,7 @@ async function handleCommand(interaction: any): Promise<void> {
       const announcementChunks = chunksFromText(buildTripAnnouncement(session, vehicle, alerts));
       await interaction.reply({
         content: announcementChunks[0],
-        files: [makeProgressAttachment(session, vehicle, stops)],
+        files: [await makeProgressAttachment(session, vehicle, stops, alerts)],
         ephemeral: true
       });
       for (const chunk of announcementChunks.slice(1)) {
@@ -316,7 +316,7 @@ async function handleLine5BoardDirectionSelect(interaction: any): Promise<void> 
   const vehicles = await getLine5Departures(stopId, direction);
   const message = await thread.send({
     content: formatDepartureBoardText(session, vehicles),
-    files: [makeDepartureBoardAttachment(session, vehicles)]
+    files: [await makeDepartureBoardAttachment(session, vehicles)]
   });
   await upsertDepartureBoard(interaction.guildId, { ...session, messageId: message.id });
   await interaction.editReply({
@@ -408,7 +408,7 @@ async function handleFollowDestinationSelect(interaction: any): Promise<void> {
   await interaction.editReply({
     content: `Trip follower is on. I will announce next stops for <@${session.userId}> and tell you to get off at **${stop.stopName}**.`,
     components: [],
-    files: vehicle ? [makeProgressAttachment(updated, vehicle, stops)] : []
+    files: vehicle ? [await makeProgressAttachment(updated, vehicle, stops)] : []
   });
 }
 
@@ -420,7 +420,7 @@ async function startAlertPolling(client: Client): Promise<void> {
     for (const guild of guilds) {
       try {
         const guildSettings = await getGuildSettings(guild.id);
-        const alerts = await getAlerts();
+        const alerts = (await getAlerts()).filter(isServiceDisruptionAlert);
         const activeIds = new Set(alerts.map((alert) => alert.id));
         const existingPosts = guildSettings.alertPosts ?? [];
         const resolvedPosts = existingPosts.filter((post) => !activeIds.has(post.alertId));
@@ -450,7 +450,12 @@ async function startAlertPolling(client: Client): Promise<void> {
         for (const alert of alerts) {
           const fingerprint = singleAlertFingerprint(alert);
           const existing = (guildSettings.alertPosts ?? []).find((post) => post.alertId === alert.id);
-          if (existing?.fingerprint === fingerprint) {
+          const key = alertCategory(alert);
+          const channelId = categoryChannels[key] || guildSettings.alertsChannelId || config.ALERT_CHANNEL_ID;
+          if (!channelId) {
+            continue;
+          }
+          if (existing?.fingerprint === fingerprint && existing.channelId === channelId) {
             continue;
           }
 
@@ -466,11 +471,6 @@ async function startAlertPolling(client: Client): Promise<void> {
             }
           }
 
-          const key = alertCategory(alert);
-          const channelId = categoryChannels[key] || guildSettings.alertsChannelId || config.ALERT_CHANNEL_ID;
-          if (!channelId) {
-            continue;
-          }
           const channel = await client.channels.fetch(channelId);
           if (!channel || channel.type === ChannelType.DM || !("send" in channel)) {
             continue;
@@ -519,7 +519,7 @@ async function startDepartureBoardPolling(client: Client): Promise<void> {
           await message.edit({
             content: formatDepartureBoardText(board, vehicles),
             attachments: [],
-            files: [makeDepartureBoardAttachment(board, vehicles)]
+            files: [await makeDepartureBoardAttachment(board, vehicles)]
           });
         } catch (error) {
           console.error(`Departure board update failed for ${board.threadId}`, error);
@@ -564,7 +564,7 @@ async function startTripFollowerPolling(client: Client): Promise<void> {
           const stops = await getTripStops(session.tripId);
           const alerts = await getAlerts();
           await sendChunks(channel as TextChannel, [buildTripAnnouncement(session, vehicle, alerts)]);
-          await (channel as TextChannel).send({ files: [makeProgressAttachment(session, vehicle, stops)] });
+          await (channel as TextChannel).send({ files: [await makeProgressAttachment(session, vehicle, stops, alerts)] });
 
           if (atDestination) {
             await removeTripFollower(guild.id, session.userId);
