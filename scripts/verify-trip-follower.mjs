@@ -5,7 +5,7 @@ import sharp from "sharp";
 process.env.DISCORD_TOKEN ??= "verify-token";
 process.env.DISCORD_CLIENT_ID ??= "verify-client";
 
-const { buildTripAnnouncement, makeTripFollowerAttachments } = await import("../src/tripFollower.ts");
+const { buildTripAnnouncement, makeTripFollowerAttachments } = await import("../dist/tripFollower.js");
 
 const outputDir = join(process.cwd(), ".data", "verification");
 await rm(outputDir, { recursive: true, force: true });

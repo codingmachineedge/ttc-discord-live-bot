@@ -77,10 +77,11 @@ Docker Compose also defines `ttc-live-test-bot`. If `TEST_DISCORD_TOKEN` is set,
 Run the local verifier before deploying changes that affect trip follower graphics or announcements:
 
 ```bash
+npm run build
 npm test
 ```
 
-The verifier renders representative Line 5 trip follower states into `.data/verification`, checks the animated map GIF and next-stop PNG dimensions/file types, and asserts the announcement text includes the expected Line 5-style English/French wording and station details.
+The verifier runs against compiled `dist` output, renders representative Line 5 trip follower states into `.data/verification`, checks the animated map GIF and next-stop PNG dimensions/file types, and asserts the announcement text includes the expected Line 5-style English/French wording and station details.
 
 ## Local Deployment
 

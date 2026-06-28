@@ -10,7 +10,7 @@
     "dev": "tsx src/index.ts",
     "lint": "tsc --noEmit",
     "live-test": "node scripts/live-test-bot.mjs",
-    "test": "tsx scripts/verify-trip-follower.mjs"
+    "test": "node scripts/verify-trip-follower.mjs"
   },
   "keywords": [
     "discord",
