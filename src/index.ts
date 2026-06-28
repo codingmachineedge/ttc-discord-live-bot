@@ -170,12 +170,13 @@ async function handleCommand(interaction: any): Promise<void> {
 
       const vehicle = await findVehicleByNumber(session.vehicleLabel ?? session.vehicleNumber);
       const stops = await getTripStops(session.tripId);
+      const alerts = await getAlerts();
       if (!vehicle) {
         await interaction.reply({ content: `Still following vehicle ${session.vehicleNumber}, but it is not in the live feed right now.`, ephemeral: true });
         return;
       }
       await interaction.reply({
-        content: buildTripAnnouncement(session, vehicle),
+        content: buildTripAnnouncement(session, vehicle, alerts),
         files: [makeProgressAttachment(session, vehicle, stops)],
         ephemeral: true
       });
@@ -341,7 +342,8 @@ async function startTripFollowerPolling(client: Client): Promise<void> {
             continue;
           }
           const stops = await getTripStops(session.tripId);
-          await sendChunks(channel as TextChannel, [buildTripAnnouncement(session, vehicle)]);
+          const alerts = await getAlerts();
+          await sendChunks(channel as TextChannel, [buildTripAnnouncement(session, vehicle, alerts)]);
           await (channel as TextChannel).send({ files: [makeProgressAttachment(session, vehicle, stops)] });
 
           if (atDestination) {

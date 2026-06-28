@@ -1,5 +1,7 @@
 import { AttachmentBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } from "discord.js";
 import type { TripFollowSession } from "./settingsStore.js";
+import type { AlertSummary } from "./types.js";
+import { formatStationDetails } from "./stationDetails.js";
 import type { TripStopSummary, VehicleSummary } from "./types.js";
 
 export function upcomingStopOptions(stops: TripStopSummary[], currentSequence?: number): StringSelectMenuBuilder {
@@ -86,27 +88,28 @@ export function makeProgressAttachment(session: TripFollowSession, vehicle: Vehi
   return new AttachmentBuilder(Buffer.from(svg, "utf8"), { name: "ttc-trip-progress.svg" });
 }
 
-export function buildTripAnnouncement(session: TripFollowSession, vehicle: VehicleSummary): string {
+export function buildTripAnnouncement(session: TripFollowSession, vehicle: VehicleSummary, alerts: AlertSummary[] = []): string {
   const currentSequence = vehicle.currentStopSequence ?? 0;
   const stopsAway = Math.max(0, session.destinationStopSequence - currentSequence);
   const nextStop = vehicle.nextStop ?? "the next stop";
   const vehicleName = vehicle.vehicleLabel || vehicle.vehicleId || session.vehicleNumber;
   const line5Style = session.routeShortName === "5" || session.routeName.toLowerCase().includes("line 5");
+  const stationDetails = formatStationDetails(vehicle, alerts).map((line) => `- ${line}`).join("\n");
 
   if (line5Style) {
     const script = buildLine5AnnouncerScript(session, vehicle, stopsAway);
     if (currentSequence >= session.destinationStopSequence || vehicle.nextStopId === session.destinationStopId) {
-      return `<@${session.userId}> get off at **${session.destinationStopName}**.\n\n${script}`;
+      return `<@${session.userId}> get off at **${session.destinationStopName}**.\n\n${script}\n\n**Station details**\n${stationDetails}`;
     }
-    return `<@${session.userId}> Line 5 Eglinton trip follower for vehicle **${vehicleName}**.\n\n${script}`;
+    return `<@${session.userId}> Line 5 Eglinton trip follower for vehicle **${vehicleName}**.\n\n${script}\n\n**Station details**\n${stationDetails}`;
   }
 
   if (currentSequence >= session.destinationStopSequence || vehicle.nextStopId === session.destinationStopId) {
-    return `<@${session.userId}> get off at **${session.destinationStopName}**. Vehicle ${vehicleName} is at or approaching your stop.`;
+    return `<@${session.userId}> get off at **${session.destinationStopName}**. Vehicle ${vehicleName} is at or approaching your stop.\n\n**Station details**\n${stationDetails}`;
   }
 
   if (stopsAway === 1) {
-    return `<@${session.userId}> next stop is **${nextStop}**. Your stop **${session.destinationStopName}** is after this. Get ready.`;
+    return `<@${session.userId}> next stop is **${nextStop}**. Your stop **${session.destinationStopName}** is after this. Get ready.\n\n**Station details**\n${stationDetails}`;
   }
 
   const status = vehicle.currentStatus === "STOPPED_AT"
@@ -115,7 +118,7 @@ export function buildTripAnnouncement(session: TripFollowSession, vehicle: Vehic
       ? "Doors closing/departed"
       : "Approaching";
 
-  return `<@${session.userId}> ${status}. Next stop: **${nextStop}**. Get off at **${session.destinationStopName}** in about ${stopsAway} stops.`;
+  return `<@${session.userId}> ${status}. Next stop: **${nextStop}**. Get off at **${session.destinationStopName}** in about ${stopsAway} stops.\n\n**Station details**\n${stationDetails}`;
 }
 
 function buildLine5AnnouncerScript(session: TripFollowSession, vehicle: VehicleSummary, stopsAway: number): string {
