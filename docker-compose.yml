@@ -1,0 +1,12 @@
+services:
+  ttc-discord-bot:
+    build: .
+    container_name: ttc-discord-live-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ttc-cache:/app/.data
+
+volumes:
+  ttc-cache:

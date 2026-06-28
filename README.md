@@ -1,0 +1,85 @@
+# TTC Discord Live Bot
+
+A Dockerized Discord bot that tracks live TTC GTFS-Realtime service alerts, delays, disruptions, and subway/LRT vehicle positions.
+
+## What it Shows
+
+- Current TTC service alerts, delays, and disruptions.
+- Live subway/LRT vehicles for tracked lines when TTC publishes them in the configured GTFS-Realtime vehicle feed.
+- Vehicle number/label when the TTC feed provides it.
+- Current GPS position with a Google Maps link.
+- Current stop, next stop, ETA, scheduled time, and delay when present in TTC GTFS-Realtime/static GTFS.
+- Optional alert polling to a Discord text channel whenever alert state changes.
+
+The bot uses TTC's public GTFS-Realtime feeds and Toronto Open Data's static GTFS schedule. Some fields are feed-dependent: if TTC does not publish a vehicle label, next stop, ETA, or delay for a vehicle at that moment, the bot reports `n/a` instead of inventing data. TTC's public BusTime feed is officially described for buses and streetcars; the default route filter includes subway/LRT line short names so the bot will surface those vehicles if/when the configured feed contains them.
+
+## Discord Commands
+
+- `/ttc-alerts` - current service alerts, delays, and disruptions.
+- `/ttc-vehicles` - all tracked subway/LRT vehicles.
+- `/ttc-vehicles line:1` - vehicles for one line.
+- `/ttc-status` - feed/config status and tracked routes.
+
+## Setup
+
+1. Create a Discord application and bot at <https://discord.com/developers/applications>.
+2. Enable the bot in your server with the `applications.commands` scope.
+3. Copy `.env.example` to `.env`.
+4. Fill in:
+
+```env
+DISCORD_TOKEN=your_discord_bot_token
+DISCORD_CLIENT_ID=your_discord_application_client_id
+DISCORD_GUILD_ID=your_server_id
+ALERT_CHANNEL_ID=optional_channel_id_for_alert_updates
+```
+
+`COMMAND_REGISTER_MODE=guild` is recommended while testing because guild slash commands update quickly. Use `global` only when you want commands registered globally.
+
+## Run with Docker
+
+```bash
+docker compose up -d --build
+docker compose logs -f
+```
+
+## Run Locally
+
+```bash
+npm install
+npm run build
+npm start
+```
+
+For development:
+
+```bash
+npm run dev
+```
+
+## Configuration
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DISCORD_TOKEN` | required | Discord bot token. |
+| `DISCORD_CLIENT_ID` | required | Discord application client ID. |
+| `DISCORD_GUILD_ID` | blank | Server ID for fast guild command registration. |
+| `ALERT_CHANNEL_ID` | blank | Text channel for automatic alert updates. |
+| `POLL_INTERVAL_SECONDS` | `30` | Alert poll interval. |
+| `COMMAND_REGISTER_MODE` | `guild` | `guild` or `global`. |
+| `SUBWAY_LRT_ROUTE_SHORT_NAMES` | `1,2,3,4,5,6` | TTC line short names to include. |
+| `TTC_VEHICLE_POSITIONS_URL` | TTC public feed | GTFS-Realtime vehicle positions endpoint. |
+| `TTC_TRIP_UPDATES_URL` | TTC public feed | GTFS-Realtime trip updates endpoint. |
+| `TTC_ALERTS_URL` | TTC public feed | GTFS-Realtime alerts endpoint. |
+| `TTC_STATIC_GTFS_URL` | Toronto Open Data zip | Static GTFS schedule zip. |
+
+## Notes
+
+- The bot does not need a database. It caches TTC feed responses in memory and downloads static GTFS on startup.
+- Static GTFS is used for route names, stop names, scheduled stop times, and next-stop fallback.
+- Live ETA/delay comes from TTC trip updates when available.
+- The default tracked short names include Lines 1-4 and planned/active LRT short names 5 and 6 if they appear in the current TTC static GTFS.
+
+## License
+
+MIT
