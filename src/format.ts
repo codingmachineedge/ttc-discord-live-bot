@@ -1,4 +1,5 @@
 import { AttachmentBuilder } from "discord.js";
+import sharp from "sharp";
 import type { AlertSummary, VehicleSummary } from "./types.js";
 
 const discordLimit = 1900;
@@ -140,7 +141,7 @@ function wrapSvgText(value: string, maxChars: number, maxLines: number): string[
   return lines;
 }
 
-export function makeAlertAttachment(alert: AlertSummary): AttachmentBuilder {
+export async function makeAlertAttachment(alert: AlertSummary): Promise<AttachmentBuilder> {
   const routes = alert.affectedRoutes.length ? alert.affectedRoutes.join(", ") : "System-wide / unspecified";
   const meta = [alert.effect, alert.cause, alert.severity].filter(Boolean).join(" / ") || "TTC SERVICE ALERT";
   const titleLines = wrapSvgText(alert.header, 36, 3);
@@ -163,13 +164,16 @@ export function makeAlertAttachment(alert: AlertSummary): AttachmentBuilder {
   <rect width="1200" height="780" rx="32" fill="#7f1d1d"/>
   <rect x="28" y="28" width="1144" height="724" rx="24" fill="#111827" stroke="#ef4444" stroke-width="10"/>
   <rect x="48" y="48" width="1104" height="54" rx="14" fill="#dc2626"/>
-  <text x="64" y="84" font-size="26" font-weight="900" fill="#ffffff">TTC SERVICE ALERT</text>
+  <text x="64" y="84" font-size="26" font-weight="900" fill="#ffffff">${escapeXml(meta)}</text>
   <text x="1132" y="84" font-size="22" fill="#fee2e2" text-anchor="end">LIVE</text>
   ${textLines}
   <text x="64" y="752" font-size="20" fill="#f8fafc">Next alert starts below the divider.</text>
 </svg>`;
 
-  return new AttachmentBuilder(Buffer.from(svg, "utf8"), { name: `ttc-alert-${alert.id.replace(/[^a-z0-9_-]/gi, "_")}.svg` });
+  const png = await sharp(Buffer.from(svg, "utf8"))
+    .png({ quality: 95, compressionLevel: 6 })
+    .toBuffer();
+  return new AttachmentBuilder(png, { name: `ttc-alert-${alert.id.replace(/[^a-z0-9_-]/gi, "_")}.png` });
 }
 
 export function singleAlertFingerprint(alert: AlertSummary): string {

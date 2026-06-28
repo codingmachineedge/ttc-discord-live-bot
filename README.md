@@ -12,7 +12,7 @@ A Dockerized Discord bot that tracks live TTC GTFS-Realtime service alerts, dela
 - Optional alert polling to a Discord text channel whenever alert state changes.
 - Automatic Discord setup for a `TTC Live` category with `ttc-alerts`, `ttc-vehicles`, and `ttc-status` channels.
 - Categorized alert channels for subway/LRT, bus/streetcar, accessibility, and general alerts.
-- High-quality SVG service alert cards, with resolved alerts deleted when they disappear from the live TTC alert feed.
+- High-quality PNG service alert cards, with resolved alerts deleted when they disappear from the live TTC alert feed.
 - Per-user service alert ping settings.
 - Real-time trip follower that asks for your vehicle number, lets you choose a get-off stop, announces stop progress, and posts an SVG route progress graphic.
 - Live Line 5 departure board threads with a large graphic that keeps editing in place.
@@ -112,7 +112,7 @@ TEST_DISCORD_TOKEN=temporary_test_bot_token npm run live-test
 - Trip follower sessions are also stored in `.data/settings.json`, so a container restart does not forget active followers.
 - Line 5 departure-board sessions are stored in `.data/settings.json` and keep editing the same message in their thread.
 - Dynamic bot messages are split before Discord's 2000-character limit.
-- Service alerts are posted as individual SVG cards so they can be removed when no longer active.
+- Service alerts are posted as individual PNG cards so they can be removed when no longer active.
 - Static GTFS is used for route names, stop names, scheduled stop times, and next-stop fallback.
 - Live ETA/delay comes from TTC trip updates when available.
 - Trip follower announcements depend on TTC publishing the entered vehicle in the realtime vehicle feed with an active `trip_id` and stop sequence.

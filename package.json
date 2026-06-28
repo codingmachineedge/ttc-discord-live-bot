@@ -28,6 +28,7 @@
     "dotenv": "^17.2.3",
     "gtfs-realtime-bindings": "^1.1.1",
     "node-cache": "^5.1.2",
+    "sharp": "^0.35.2",
     "unzipper": "^0.12.3",
     "zod": "^4.2.1"
   },

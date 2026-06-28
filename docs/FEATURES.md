@@ -23,7 +23,7 @@ Discord message output is split to stay below Discord message length limits.
 
 ## General Channel Feedback
 
-The bot listens for user messages in `GENERAL_CHANNEL_ID` when configured, or in channels named `general` otherwise. When it sees a non-bot message there, it replies to the author with a short acknowledgement that the message was read as TTC bot feedback.
+The bot listens for messages in `GENERAL_CHANNEL_ID` when configured, or in channels named `general` otherwise. When it sees a message from a real user or the separate live-test bot, it replies to the author with a short acknowledgement that the message was read as TTC bot feedback. It ignores its own acknowledgement messages to avoid loops.
 
 Acknowledgements are rate-limited per user per server so a busy general chat is not flooded.
 
@@ -63,7 +63,7 @@ The normal vehicle list is filtered to configured route short names. By default,
 
 Automatic alert polling posts only when alert state changes. The bot calculates alert changes from stable alert fields rather than posting every polling interval.
 
-Automatic alerts are posted as individual SVG alert cards. Each posted alert message ID is stored, and when an alert ID disappears from the live feed the bot deletes the corresponding Discord message.
+Automatic alerts are posted as individual PNG alert cards. Each posted alert message ID is stored, and when an alert ID disappears from the live feed the bot deletes the corresponding Discord message.
 
 ## Alert Routing
 

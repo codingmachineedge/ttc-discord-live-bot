@@ -64,7 +64,7 @@ function chunksFromText(text: string): string[] {
 const feedbackAcknowledgements = new Map<string, number>();
 
 async function handleGeneralFeedbackMessage(message: Message): Promise<void> {
-  if (!message.guild || message.author.bot) {
+  if (!message.guild || message.author.id === message.client.user.id) {
     return;
   }
   const isConfiguredGeneral = config.GENERAL_CHANNEL_ID && message.channelId === config.GENERAL_CHANNEL_ID;
@@ -476,8 +476,8 @@ async function startAlertPolling(client: Client): Promise<void> {
             continue;
           }
           const message = await (channel as TextChannel).send({
-            content: mentions ? `${mentions}\n# TTC Service Alert` : "# TTC Service Alert",
-            files: [makeAlertAttachment(alert)]
+            content: mentions || undefined,
+            files: [await makeAlertAttachment(alert)]
           });
           await upsertAlertPost(guild.id, {
             alertId: alert.id,
