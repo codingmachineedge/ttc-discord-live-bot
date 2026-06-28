@@ -161,7 +161,237 @@ async function getVehicleSummaries(options: { routeShortName?: string; trackedOn
 }
 
 export async function getVehicles(routeShortName?: string): Promise<VehicleSummary[]> {
-  return getVehicleSummaries({ routeShortName, trackedOnly: true });
+  return getVehicleSummaries({ routeShortName, trackedOnly: !routeShortName });
+}
+
+function distanceMeters(a: { lat?: number; lon?: number }, b: { lat?: number; lon?: number }): number {
+  if (a.lat === undefined || a.lon === undefined || b.lat === undefined || b.lon === undefined) {
+    return Infinity;
+  }
+  const radius = 6371000;
+  const toRad = (value: number) => value * Math.PI / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLon = toRad(b.lon - a.lon);
+  const lat1 = toRad(a.lat);
+  const lat2 = toRad(b.lat);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * radius * Math.asin(Math.sqrt(h));
+}
+
+export type LiveDepartureSummary = {
+  routeShortName: string;
+  routeName: string;
+  stopId: string;
+  stopName: string;
+  tripId?: string;
+  headsign?: string;
+  vehicleLabel?: string;
+  eta?: Date;
+  waitMinutes?: number;
+  delaySeconds?: number;
+  source: "gtfs-realtime";
+};
+
+export type NearbyVehicleSummary = {
+  routeShortName: string;
+  vehicleLabel: string;
+  distanceMeters: number;
+  latitude?: number;
+  longitude?: number;
+  bearing?: number;
+  currentStatus?: string;
+  updatedAt?: Date;
+};
+
+function bearingMatches(bearing: number | undefined, direction: "northbound" | "southbound" | "eastbound" | "westbound" | undefined): boolean {
+  if (bearing === undefined || !direction) {
+    return true;
+  }
+  if (direction === "northbound") {
+    return bearing >= 315 || bearing <= 45;
+  }
+  if (direction === "southbound") {
+    return bearing >= 135 && bearing <= 225;
+  }
+  if (direction === "eastbound") {
+    return bearing >= 45 && bearing <= 135;
+  }
+  return bearing >= 225 && bearing <= 315;
+}
+
+export async function getLiveVehiclesNearStop(options: {
+  routeShortName: string;
+  anchorStopPattern: RegExp;
+  headsignPattern?: RegExp;
+  branchStopPattern?: RegExp;
+  direction?: "northbound" | "southbound" | "eastbound" | "westbound";
+  radiusMeters?: number;
+  limit?: number;
+}): Promise<NearbyVehicleSummary[]> {
+  const [staticGtfs, tripFeed, vehicles] = await Promise.all([
+    getStaticGtfs(),
+    fetchRealtimeFeed(config.TTC_TRIP_UPDATES_URL),
+    getVehicleSummaries({ routeShortName: options.routeShortName, trackedOnly: false })
+  ]);
+  const anchor = [...staticGtfs.stops.values()].find((stop) => options.anchorStopPattern.test(stop.name));
+  if (!anchor) {
+    return [];
+  }
+  const branchTripIds = new Set<string>();
+  if (options.branchStopPattern) {
+    for (const entity of tripFeed.entity ?? []) {
+      const tripUpdate = entity.tripUpdate;
+      const trip = tripUpdate?.trip;
+      if (String(trip?.routeId ?? "") !== options.routeShortName || !trip.tripId) {
+        continue;
+      }
+      const hasBranchStop = (tripUpdate.stopTimeUpdate ?? []).some((item: any) => {
+        const stop = staticGtfs.stops.get(String(item.stopId));
+        return stop ? options.branchStopPattern?.test(stop.name) : false;
+      });
+      if (hasBranchStop) {
+        branchTripIds.add(trip.tripId);
+      }
+    }
+  }
+
+  return vehicles
+    .filter((vehicle) => {
+      if (vehicle.latitude === undefined || vehicle.longitude === undefined) {
+        return false;
+      }
+      if (!options.headsignPattern) {
+        return !options.branchStopPattern || (vehicle.tripId ? branchTripIds.has(vehicle.tripId) : false);
+      }
+      const tripInfo = vehicle.tripId ? staticGtfs.trips.get(vehicle.tripId) : undefined;
+      return options.headsignPattern.test(tripInfo?.headsign ?? vehicle.headsign ?? "")
+        || (!!options.branchStopPattern && !!vehicle.tripId && branchTripIds.has(vehicle.tripId));
+    })
+    .map((vehicle) => ({
+      vehicle,
+      distance: distanceMeters(anchor, { lat: vehicle.latitude, lon: vehicle.longitude })
+    }))
+    .filter((item) => item.distance <= (options.radiusMeters ?? 900) && bearingMatches(item.vehicle.bearing, options.direction))
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, options.limit ?? 3)
+    .map((item) => ({
+      routeShortName: options.routeShortName,
+      vehicleLabel: item.vehicle.vehicleLabel ?? item.vehicle.vehicleId,
+      distanceMeters: Math.round(item.distance),
+      latitude: item.vehicle.latitude,
+      longitude: item.vehicle.longitude,
+      bearing: item.vehicle.bearing,
+      currentStatus: item.vehicle.currentStatus,
+      updatedAt: item.vehicle.updatedAt
+    }));
+}
+
+export async function getLiveDeparturesNearStop(options: {
+  routeShortName: string;
+  anchorStopPattern: RegExp;
+  headsignPattern?: RegExp;
+  branchStopPattern?: RegExp;
+  radiusMeters?: number;
+  limit?: number;
+}): Promise<LiveDepartureSummary[]> {
+  const [staticGtfs, tripFeed, vehicles] = await Promise.all([
+    getStaticGtfs(),
+    fetchRealtimeFeed(config.TTC_TRIP_UPDATES_URL),
+    getVehicleSummaries({ routeShortName: options.routeShortName, trackedOnly: false })
+  ]);
+  const route = staticGtfs.routesByShortName.get(options.routeShortName);
+  if (!route) {
+    return [];
+  }
+  const anchor = [...staticGtfs.stops.values()].find((stop) => options.anchorStopPattern.test(stop.name));
+  if (!anchor) {
+    return [];
+  }
+
+  const routeStopIds = new Set<string>();
+  for (const trip of staticGtfs.trips.values()) {
+    if (trip.routeId !== route.id) {
+      continue;
+    }
+    if (options.headsignPattern && !options.headsignPattern.test(trip.headsign ?? "")) {
+      continue;
+    }
+    for (const stopTime of staticGtfs.stopTimesByTrip.get(trip.id) ?? []) {
+      const stop = staticGtfs.stops.get(stopTime.stopId);
+      if (stop && distanceMeters(anchor, stop) <= (options.radiusMeters ?? 550)) {
+        routeStopIds.add(stop.id);
+      }
+    }
+  }
+  if (!routeStopIds.size) {
+    return [];
+  }
+
+  const vehicleByTrip = new Map(vehicles.filter((vehicle) => vehicle.tripId).map((vehicle) => [vehicle.tripId, vehicle]));
+  const nowSeconds = Date.now() / 1000;
+  const departures: LiveDepartureSummary[] = [];
+  for (const entity of tripFeed.entity ?? []) {
+    const tripUpdate = entity.tripUpdate;
+    const trip = tripUpdate?.trip;
+    if (trip?.routeId !== route.id || !trip.tripId) {
+      continue;
+    }
+    const tripInfo = staticGtfs.trips.get(trip.tripId);
+    if (options.headsignPattern && !options.headsignPattern.test(tripInfo?.headsign ?? "")) {
+      const hasBranchStop = options.branchStopPattern
+        ? (tripUpdate.stopTimeUpdate ?? []).some((item: any) => {
+          const stop = staticGtfs.stops.get(String(item.stopId));
+          return stop ? options.branchStopPattern?.test(stop.name) : false;
+        })
+        : false;
+      if (!hasBranchStop) {
+        continue;
+      }
+    }
+    if (!options.headsignPattern && options.branchStopPattern) {
+      const hasBranchStop = (tripUpdate.stopTimeUpdate ?? []).some((item: any) => {
+        const stop = staticGtfs.stops.get(String(item.stopId));
+        return stop ? options.branchStopPattern?.test(stop.name) : false;
+      });
+      if (!hasBranchStop) {
+        continue;
+      }
+    }
+    if (!tripInfo && options.headsignPattern && !options.branchStopPattern) {
+      continue;
+    }
+    const update = (tripUpdate.stopTimeUpdate ?? [])
+      .filter((item: any) => routeStopIds.has(item.stopId))
+      .map((item: any) => ({
+        item,
+        time: stopUpdateTime(item)
+      }))
+      .filter((item: any) => item.time && item.time >= nowSeconds - 60)
+      .sort((a: any, b: any) => a.time - b.time)[0];
+    if (!update) {
+      continue;
+    }
+    const stop = staticGtfs.stops.get(update.item.stopId);
+    const eta = new Date(update.time * 1000);
+    const vehicle = vehicleByTrip.get(trip.tripId);
+    departures.push({
+      routeShortName: route.shortName,
+      routeName: `${route.shortName} ${route.longName}`.trim(),
+      stopId: update.item.stopId,
+      stopName: stop?.name ?? update.item.stopId,
+      tripId: trip.tripId,
+      headsign: tripInfo?.headsign,
+      vehicleLabel: vehicle?.vehicleLabel ?? vehicle?.vehicleId,
+      eta,
+      waitMinutes: Math.max(0, Math.round((eta.getTime() - Date.now()) / 60000)),
+      delaySeconds: stopUpdateDelay(update.item),
+      source: "gtfs-realtime"
+    });
+  }
+
+  return departures
+    .sort((a, b) => (a.eta?.getTime() ?? Infinity) - (b.eta?.getTime() ?? Infinity))
+    .slice(0, options.limit ?? 3);
 }
 
 export async function findVehicleByNumber(vehicleNumber: string): Promise<VehicleSummary | undefined> {

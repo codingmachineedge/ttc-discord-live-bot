@@ -1,8 +1,12 @@
-import type { AttachmentBuilder } from "discord.js";
+import { AttachmentBuilder } from "discord.js";
+import gifenc from "gifenc";
+import sharp from "sharp";
 import type { AlertSummary, TripStopSummary, VehicleSummary } from "./types.js";
-import { getAlerts, getLine5Departures, getLine5Stations, getTripStops } from "./ttcClient.js";
+import { getAlerts, getLine5Departures, getLine5Stations, getLiveDeparturesNearStop, getLiveVehiclesNearStop, getTripStops, type LiveDepartureSummary, type NearbyVehicleSummary } from "./ttcClient.js";
 import { makeTripFollowerAttachments } from "./tripFollower.js";
 import type { TripFollowSession } from "./settingsStore.js";
+
+const { applyPalette, GIFEncoder, quantize } = gifenc;
 
 type TripOption = {
   key: "birchmount-17a" | "golden-mile-68b" | "kennedy-go-viva";
@@ -10,7 +14,12 @@ type TripOption = {
   line5Destination: "Birchmount" | "Golden Mile" | "Kennedy";
   line5StopPattern: RegExp;
   transfer: string;
-  transferWaitMinutes: number;
+  transferRouteShortName?: "17" | "68";
+  transferAnchorStopPattern?: RegExp;
+  transferHeadsignPattern?: RegExp;
+  transferBranchStopPattern?: RegExp;
+  transferDirection?: "northbound" | "southbound" | "eastbound" | "westbound";
+  scheduledTransferWaitMinutes?: number;
   notes: string[];
 };
 
@@ -25,6 +34,17 @@ type DisruptionSummary = {
   lines: string[];
 };
 
+type EvaluatedTripOption = {
+  option: TripOption;
+  destination: TripStopSummary | undefined;
+  inVehicleMinutes: number | undefined;
+  liveTransfers: LiveDepartureSummary[];
+  liveTransferVehicles: NearbyVehicleSummary[];
+  transferWaitMinutes: number | undefined;
+  transferWaitSource: string;
+  score: number;
+};
+
 const options: TripOption[] = [
   {
     key: "birchmount-17a",
@@ -32,8 +52,12 @@ const options: TripOption[] = [
     line5Destination: "Birchmount",
     line5StopPattern: /Birchmount/i,
     transfer: "17A Birchmount northbound at Birchmount Station",
-    transferWaitMinutes: 6,
-    notes: ["Best TTC-only option when you want the shortest planned transfer wait."]
+    transferRouteShortName: "17",
+    transferAnchorStopPattern: /Birchmount Station|Birchmount Rd at Eglinton/i,
+    transferHeadsignPattern: /\b17A\b.*Highway 7/i,
+    transferBranchStopPattern: /Highway 7|Rougeside|Uptown|Enterprise|Verdale/i,
+    transferDirection: "northbound",
+    notes: ["TTC-only option ranked with live route 17 GTFS-Realtime departures when available."]
   },
   {
     key: "golden-mile-68b",
@@ -41,8 +65,12 @@ const options: TripOption[] = [
     line5Destination: "Golden Mile",
     line5StopPattern: /Golden Mile/i,
     transfer: "68B Warden northbound at Golden Mile Station",
-    transferWaitMinutes: 8,
-    notes: ["Good TTC-only backup if Birchmount/17A timing looks worse."]
+    transferRouteShortName: "68",
+    transferAnchorStopPattern: /Golden Mile Station|Warden Ave at Eglinton/i,
+    transferHeadsignPattern: /\b68B\b.*Major Mackenzie/i,
+    transferBranchStopPattern: /Major Mackenzie|Angus Glen|Cachet|16th Ave/i,
+    transferDirection: "northbound",
+    notes: ["TTC-only backup ranked with live route 68 GTFS-Realtime departures when available."]
   },
   {
     key: "kennedy-go-viva",
@@ -50,8 +78,7 @@ const options: TripOption[] = [
     line5Destination: "Kennedy",
     line5StopPattern: /Kennedy/i,
     transfer: "Stouffville GO at Kennedy, then westbound Viva Purple A at Unionville GO",
-    transferWaitMinutes: 14,
-    notes: ["Preferred only when the Unionville GO to westbound Viva Purple A connection is under 15 minutes.", "GO/Viva timing is hardcoded here until GO/YRT realtime feeds are added."]
+    notes: ["GO/Viva is not ranked as live until GO and YRT realtime feed URLs are configured."]
   }
 ];
 
@@ -64,6 +91,46 @@ function minutesUntil(date: Date | undefined): number | undefined {
 
 function displayMinutes(minutes: number | undefined): string {
   return minutes === undefined ? "live ETA unavailable" : `${minutes} min`;
+}
+
+function transferBranchLabel(option: TripOption): string {
+  if (option.key === "birchmount-17a") {
+    return "17A";
+  }
+  if (option.key === "golden-mile-68b") {
+    return "68B";
+  }
+  return "GO/Viva";
+}
+
+function escapeXml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function wrapText(value: string, maxChars: number, maxLines: number): string[] {
+  const words = value.replace(/\s+/g, " ").trim().split(" ");
+  const lines: string[] = [];
+  let current = "";
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > maxChars && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = next;
+    }
+    if (lines.length >= maxLines) {
+      break;
+    }
+  }
+  if (current && lines.length < maxLines) {
+    lines.push(current);
+  }
+  return lines;
 }
 
 function stopByPattern(stops: TripStopSummary[], pattern: RegExp): TripStopSummary | undefined {
@@ -91,10 +158,106 @@ async function firstBoardingVehicle(): Promise<VehicleSummary | undefined> {
   return departures[0];
 }
 
-function rankOption(option: TripOption, boardWait: number | undefined, inVehicleMinutes: number | undefined): number {
-  const unknownPenalty = boardWait === undefined || inVehicleMinutes === undefined ? 10 : 0;
-  const goPreferenceBonus = option.key === "kennedy-go-viva" && option.transferWaitMinutes < 15 ? -3 : 0;
-  return (boardWait ?? 12) + (inVehicleMinutes ?? 20) + option.transferWaitMinutes + unknownPenalty + goPreferenceBonus;
+function rankOption(option: TripOption, boardWait: number | undefined, inVehicleMinutes: number | undefined, transferWait: number | undefined): number {
+  const unknownPenalty = boardWait === undefined || inVehicleMinutes === undefined || transferWait === undefined ? 20 : 0;
+  const goPreferenceBonus = option.key === "kennedy-go-viva" && (transferWait ?? 99) < 15 ? -3 : 0;
+  const unconfiguredPenalty = option.key === "kennedy-go-viva" && transferWait === undefined ? 40 : 0;
+  return (boardWait ?? 12) + (inVehicleMinutes ?? 20) + (transferWait ?? 30) + unknownPenalty + goPreferenceBonus + unconfiguredPenalty;
+}
+
+async function liveTransferDepartures(option: TripOption): Promise<LiveDepartureSummary[]> {
+  if (!option.transferRouteShortName || !option.transferAnchorStopPattern) {
+    return [];
+  }
+  return getLiveDeparturesNearStop({
+    routeShortName: option.transferRouteShortName,
+    anchorStopPattern: option.transferAnchorStopPattern,
+    headsignPattern: option.transferHeadsignPattern,
+    branchStopPattern: option.transferBranchStopPattern,
+    limit: 3
+  });
+}
+
+async function liveTransferVehicles(option: TripOption): Promise<NearbyVehicleSummary[]> {
+  if (!option.transferRouteShortName || !option.transferAnchorStopPattern) {
+    return [];
+  }
+  return getLiveVehiclesNearStop({
+    routeShortName: option.transferRouteShortName,
+    anchorStopPattern: option.transferAnchorStopPattern,
+    headsignPattern: option.transferHeadsignPattern,
+    branchStopPattern: option.transferBranchStopPattern,
+    direction: option.transferDirection,
+    limit: 3
+  });
+}
+
+function recommendationGifSvg(best: EvaluatedTripOption, evaluated: EvaluatedTripOption[], boardWait: number | undefined, vehicleName: string | undefined, frame: number): string {
+  const width = 1200;
+  const height = 700;
+  const pulse = frame % 2 === 0;
+  const line5Vehicle = vehicleName ? `Line 5 vehicle ${vehicleName}` : "No live Line 5 vehicle in feed";
+  const transferVehicle = best.liveTransferVehicles[0]
+    ? `${best.option.transferRouteShortName} vehicle ${best.liveTransferVehicles[0].vehicleLabel}`
+    : best.option.transferRouteShortName ? `No live ${best.option.transferRouteShortName} branch vehicle matched` : "GO/Viva realtime not configured";
+  const etaLine = boardWait === undefined ? "Boarding ETA unavailable" : `Board Line 5 in ${boardWait} min`;
+  const transferLine = best.transferWaitMinutes === undefined
+    ? `Transfer wait unavailable (${best.transferWaitSource})`
+    : `Transfer wait ${best.transferWaitMinutes} min (${best.transferWaitSource})`;
+  const tickerText = `Use only branch ${best.option.transferRouteShortName ?? "GO/Viva"} when shown. ${line5Vehicle}. ${transferVehicle}.`;
+  const tickerX = 1140 - frame * 42;
+  const optionRows = evaluated.slice(0, 3).map((item, index) => {
+    const y = 420 + index * 70;
+    const selected = item.option.key === best.option.key;
+    const branch = item.option.transferRouteShortName ?? "GO/Viva";
+    const vehicle = item.liveTransferVehicles[0]?.vehicleLabel ?? "n/a";
+    const wait = item.transferWaitMinutes === undefined ? "n/a" : `${item.transferWaitMinutes} min`;
+    return `
+      <rect x="64" y="${y - 42}" width="1072" height="56" rx="14" fill="${selected ? "#14532d" : "#1f2937"}" stroke="${selected ? "#22c55e" : "#334155"}" stroke-width="4"/>
+      <text x="92" y="${y - 6}" font-size="24" font-weight="900" fill="#ffffff">${escapeXml(branch)}</text>
+      <text x="210" y="${y - 6}" font-size="22" font-weight="800" fill="#e5e7eb">${escapeXml(item.option.line5Destination)}</text>
+      <text x="660" y="${y - 6}" font-size="22" font-weight="800" fill="#facc15" text-anchor="middle">wait ${escapeXml(wait)}</text>
+      <text x="1040" y="${y - 6}" font-size="22" font-weight="800" fill="#cbd5e1" text-anchor="end">bus/train ${escapeXml(vehicle)}</text>`;
+  }).join("\n");
+  const titleLines = wrapText(best.option.title, 36, 2);
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="100%" height="100%" fill="#020617"/>
+  <g font-family="DejaVu Sans, Arial, sans-serif">
+    <rect x="34" y="30" width="1132" height="640" rx="28" fill="#0f172a" stroke="${pulse ? "#facc15" : "#64748b"}" stroke-width="8"/>
+    <text x="64" y="92" font-size="28" font-weight="900" fill="#facc15">RECOMMENDED EASTBOUND TRIP</text>
+    ${titleLines.map((line, index) => `<text x="64" y="${150 + index * 48}" font-size="42" font-weight="900" fill="#ffffff">${escapeXml(line)}</text>`).join("\n")}
+    <rect x="64" y="245" width="500" height="94" rx="18" fill="${vehicleName ? "#064e3b" : "#7f1d1d"}"/>
+    <text x="92" y="286" font-size="24" font-weight="900" fill="#ffffff">LINE 5 BOARDING</text>
+    <text x="92" y="320" font-size="26" font-weight="900" fill="#f8fafc">${escapeXml(etaLine)}</text>
+    <text x="540" y="320" font-size="22" font-weight="900" fill="#cbd5e1" text-anchor="end">${escapeXml(vehicleName ?? "vehicle n/a")}</text>
+    <rect x="596" y="245" width="540" height="94" rx="18" fill="${best.liveTransferVehicles[0] ? "#064e3b" : "#78350f"}"/>
+    <text x="624" y="286" font-size="24" font-weight="900" fill="#ffffff">TRANSFER VEHICLE</text>
+    <text x="624" y="320" font-size="26" font-weight="900" fill="#f8fafc">${escapeXml(transferVehicle)}</text>
+    <text x="64" y="382" font-size="26" font-weight="900" fill="#e5e7eb">${escapeXml(transferLine)}</text>
+    ${optionRows}
+    <rect x="64" y="626" width="1072" height="28" rx="10" fill="#111827"/>
+    <text x="${tickerX}" y="647" font-size="19" font-weight="900" fill="#facc15">${escapeXml(tickerText)}</text>
+  </g>
+</svg>`;
+}
+
+async function makeRecommendationGifAttachment(best: EvaluatedTripOption, evaluated: EvaluatedTripOption[], boardWait: number | undefined, vehicleName: string | undefined): Promise<AttachmentBuilder> {
+  const width = 1200;
+  const height = 700;
+  const gif = GIFEncoder();
+  for (let frame = 0; frame < 12; frame += 1) {
+    const raw = await sharp(Buffer.from(recommendationGifSvg(best, evaluated, boardWait, vehicleName, frame), "utf8"))
+      .raw()
+      .ensureAlpha()
+      .toBuffer();
+    const palette = quantize(raw, 256, { format: "rgb565" });
+    const index = applyPalette(raw, palette, "rgb565");
+    gif.writeFrame(index, width, height, { palette, delay: 260, repeat: 0 });
+  }
+  gif.finish();
+  return new AttachmentBuilder(Buffer.from(gif.bytes()), { name: "ttc-trip-recommendation.gif" });
 }
 
 function expectedReturnText(alert: AlertSummary): string | undefined {
@@ -151,14 +314,25 @@ export async function buildEglintonEastboundRecommendation(userId?: string): Pro
   const boardWait = minutesUntil(boardingVehicle?.eta);
   const disruptions = summarizeDisruptions(alerts);
 
-  const evaluated = options.map((option) => {
+  const [transferDepartures, transferVehicles] = await Promise.all([
+    Promise.all(options.map(liveTransferDepartures)),
+    Promise.all(options.map(liveTransferVehicles))
+  ]);
+
+  const evaluated = options.map((option, index) => {
     const destination = stopByPattern(tripStops, option.line5StopPattern) ?? stopByPattern(stations, option.line5StopPattern);
     const inVehicleMinutes = scheduleMinutesBetween(tripStops, fromStop, destination);
+    const liveTransfer = transferDepartures[index][0];
+    const transferWaitMinutes = liveTransfer?.waitMinutes ?? option.scheduledTransferWaitMinutes;
     return {
       option,
       destination,
       inVehicleMinutes,
-      score: rankOption(option, boardWait, inVehicleMinutes) + disruptions.penalty
+      liveTransfers: transferDepartures[index],
+      liveTransferVehicles: transferVehicles[index],
+      transferWaitMinutes,
+      transferWaitSource: liveTransfer ? `live TTC GTFS-Realtime ${transferBranchLabel(option)}` : option.key === "kennedy-go-viva" ? "GO/YRT realtime not configured" : `no branch-matched live TTC GTFS-Realtime ${transferBranchLabel(option)} departure`,
+      score: rankOption(option, boardWait, inVehicleMinutes, transferWaitMinutes) + disruptions.penalty
     };
   }).sort((a, b) => a.score - b.score);
 
@@ -174,7 +348,13 @@ export async function buildEglintonEastboundRecommendation(userId?: string): Pro
     line5Eta,
     `Ride Line 5 to **${best.option.line5Destination}**${best.inVehicleMinutes !== undefined ? `, about **${best.inVehicleMinutes} min** on board` : ""}.`,
     `Transfer to **${best.option.transfer}**.`,
-    `Expected transfer wait: **${displayMinutes(best.option.transferWaitMinutes)}**.`,
+    `Expected transfer wait: **${displayMinutes(best.transferWaitMinutes)}** (${best.transferWaitSource}).`,
+    best.liveTransfers.length
+      ? `Next ${transferBranchLabel(best.option)} departure: **${best.liveTransfers[0].eta?.toLocaleTimeString("en-CA", { timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit" })}** at **${best.liveTransfers[0].stopName}**${best.liveTransfers[0].vehicleLabel ? `, vehicle **${best.liveTransfers[0].vehicleLabel}**` : ""}.`
+      : best.option.transferRouteShortName ? `No live ${transferBranchLabel(best.option)} departure matched the transfer stop right now.` : undefined,
+    best.liveTransferVehicles.length
+      ? `Bus vehicle to look for: **${transferBranchLabel(best.option)} vehicle ${best.liveTransferVehicles[0].vehicleLabel}**, about **${best.liveTransferVehicles[0].distanceMeters} m** from the transfer stop${best.liveTransferVehicles[0].bearing !== undefined ? `, bearing **${Math.round(best.liveTransferVehicles[0].bearing)} deg**` : ""}.`
+      : best.option.transferRouteShortName ? `No nearby live ${transferBranchLabel(best.option)} vehicle position matched the transfer stop right now.` : undefined,
     disruptions.lines.length
       ? `\n**Service disruptions detected**\n${disruptions.lines.join("\n")}`
       : "\n**Service disruptions detected**\n- No matching Line 5 / transfer disruption found in the current TTC alert feed.",
@@ -185,11 +365,12 @@ export async function buildEglintonEastboundRecommendation(userId?: string): Pro
     "",
     "**Other options checked**",
     ...evaluated.slice(1).map((item) =>
-      `- ${item.option.title}: Line 5 ride ${displayMinutes(item.inVehicleMinutes)}, transfer wait ${displayMinutes(item.option.transferWaitMinutes)}.`
+      `- ${item.option.title}: Line 5 ride ${displayMinutes(item.inVehicleMinutes)}, transfer wait ${displayMinutes(item.transferWaitMinutes)} (${item.transferWaitSource}).`
     )
   ].filter(Boolean) as string[];
 
   const files: AttachmentBuilder[] = [];
+  files.push(await makeRecommendationGifAttachment(best, evaluated, boardWait, vehicleName));
   const liveTripDestination = boardingVehicle?.tripId ? stopByPattern(tripStops, best.option.line5StopPattern) : undefined;
   if (boardingVehicle?.tripId && liveTripDestination) {
     const session: TripFollowSession = {
