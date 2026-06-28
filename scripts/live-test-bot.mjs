@@ -101,7 +101,7 @@ async function main() {
   await sendImageStep(channel, `Live test ${runId}: image/file attachment test for TTC bot feedback pickup.`);
   await new Promise((resolve) => setTimeout(resolve, 1500));
   await send(channel, `Live test ${runId}: leaving eastbound from Eglinton. Please recommend the lowest-wait trip.`);
-  await new Promise((resolve) => setTimeout(resolve, 12000));
+  await new Promise((resolve) => setTimeout(resolve, 30000));
 
   const messages = await discord(`/channels/${channel.id}/messages?limit=30`);
   const acknowledgements = messages.filter((message) =>
