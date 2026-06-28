@@ -17,6 +17,7 @@ A Dockerized Discord bot that tracks live TTC GTFS-Realtime service alerts, dela
 - Live Line 5 departure board threads with a large graphic that keeps editing in place.
 - Line 5 Eglinton trip follower messages include a Line 5-style English/French announcer script for next-stop, doors-closing/departure, and get-off reminders.
 - Rail/LRT trip follower messages include next-station details for door side, elevators, escalators, washrooms, and station depth when the bot has a configured or inferred value.
+- General-channel feedback reader that pings users back after reading TTC bot feedback in `#general` or `GENERAL_CHANNEL_ID`.
 
 The bot uses TTC's public GTFS-Realtime feeds and Toronto Open Data's static GTFS schedule. Some fields are feed-dependent: if TTC does not publish a vehicle label, next stop, ETA, or delay for a vehicle at that moment, the bot reports `n/a` instead of inventing data. TTC's public BusTime feed is officially described for buses and streetcars; the default route filter includes subway/LRT line short names so the bot will surface those vehicles if/when the configured feed contains them.
 
@@ -47,6 +48,7 @@ DISCORD_TOKEN=your_discord_bot_token
 DISCORD_CLIENT_ID=your_discord_application_client_id
 DISCORD_GUILD_ID=your_server_id
 ALERT_CHANNEL_ID=optional_channel_id_for_alert_updates
+GENERAL_CHANNEL_ID=optional_general_feedback_channel_id
 AUTO_SETUP_CHANNELS=true
 ```
 
@@ -58,6 +60,8 @@ AUTO_SETUP_CHANNELS=true
 docker compose up -d --build
 docker compose logs -f
 ```
+
+If `TEST_DISCORD_TOKEN` is present in `.env`, Docker Compose also starts a scheduled live-test bot that posts test steps to the general channel every 30 minutes.
 
 ## Run Locally
 
@@ -73,6 +77,12 @@ For development:
 npm run dev
 ```
 
+Run the separate test bot once:
+
+```bash
+TEST_DISCORD_TOKEN=temporary_test_bot_token npm run live-test
+```
+
 ## Configuration
 
 | Variable | Default | Purpose |
@@ -81,6 +91,10 @@ npm run dev
 | `DISCORD_CLIENT_ID` | required | Discord application client ID. |
 | `DISCORD_GUILD_ID` | blank | Server ID for fast guild command registration. |
 | `ALERT_CHANNEL_ID` | blank | Text channel for automatic alert updates. |
+| `GENERAL_CHANNEL_ID` | blank | Optional exact channel ID for general feedback reading. If blank, channels named `general` are used. |
+| `TEST_DISCORD_TOKEN` | blank | Optional separate bot token for the scheduled live-test bot. Keep it out of Git. |
+| `TEST_GUILD_ID` | blank | Optional guild override for the live-test bot. |
+| `TEST_GENERAL_CHANNEL_ID` | blank | Optional general-channel override for the live-test bot. |
 | `AUTO_SETUP_CHANNELS` | `true` | Automatically create/update the `TTC Live` category and channels on startup. |
 | `POLL_INTERVAL_SECONDS` | `30` | Alert poll interval. |
 | `COMMAND_REGISTER_MODE` | `guild` | `guild` or `global`. |

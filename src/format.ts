@@ -7,6 +7,23 @@ export function chunkMessages(lines: string[], heading?: string): string[] {
   let current = heading ? `${heading}\n` : "";
 
   for (const line of lines) {
+    if (line.length > discordLimit) {
+      if (current.trim()) {
+        chunks.push(current.trimEnd());
+        current = "";
+      }
+      let remaining = line;
+      while (remaining.length > discordLimit) {
+        const splitAt = remaining.lastIndexOf(" ", discordLimit) > 0
+          ? remaining.lastIndexOf(" ", discordLimit)
+          : discordLimit;
+        chunks.push(remaining.slice(0, splitAt).trimEnd());
+        remaining = remaining.slice(splitAt).trimStart();
+      }
+      current = remaining ? `${remaining}\n` : "";
+      continue;
+    }
+
     const candidate = `${current}${line}\n`;
     if (candidate.length > discordLimit && current.trim()) {
       chunks.push(current.trimEnd());

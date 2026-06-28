@@ -73,6 +73,18 @@ function realtimeStopUpdate(tripUpdate: any, sequence: number | undefined, fallb
   return updates[0];
 }
 
+function stopUpdateTime(stopUpdate: any): number | undefined {
+  const raw = stopUpdate?.arrival?.time?.low
+    ?? stopUpdate?.arrival?.time
+    ?? stopUpdate?.departure?.time?.low
+    ?? stopUpdate?.departure?.time;
+  return raw === undefined ? undefined : Number(raw);
+}
+
+function stopUpdateDelay(stopUpdate: any): number | undefined {
+  return stopUpdate?.arrival?.delay ?? stopUpdate?.departure?.delay;
+}
+
 async function getVehicleSummaries(options: { routeShortName?: string; trackedOnly: boolean } = { trackedOnly: true }): Promise<VehicleSummary[]> {
   const [staticGtfs, vehicleFeed, tripFeed] = await Promise.all([
     getStaticGtfs(),
@@ -119,7 +131,7 @@ async function getVehicleSummaries(options: { routeShortName?: string; trackedOn
     const tripUpdate = trip?.tripId ? tripUpdates.get(trip.tripId) : undefined;
     const stopUpdate = realtimeStopUpdate(tripUpdate, vehicle.currentStopSequence, fallbackNextStop?.stopId);
     const nextStopId = stopUpdate?.stopId || fallbackNextStop?.stopId;
-    const etaSeconds = stopUpdate?.arrival?.time?.low ?? stopUpdate?.arrival?.time ?? stopUpdate?.departure?.time?.low ?? stopUpdate?.departure?.time;
+    const etaSeconds = stopUpdateTime(stopUpdate);
 
     vehicles.push({
       vehicleId: vehicle.vehicle?.id ?? entity.id,
@@ -140,7 +152,7 @@ async function getVehicleSummaries(options: { routeShortName?: string; trackedOn
       nextStop: nextStopId ? staticGtfs.stops.get(nextStopId)?.name : undefined,
       scheduledTime: fallbackNextStop?.arrivalTime || fallbackNextStop?.departureTime,
       eta: etaSeconds ? new Date(Number(etaSeconds) * 1000) : undefined,
-      delaySeconds: stopUpdate?.arrival?.delay ?? stopUpdate?.departure?.delay,
+      delaySeconds: stopUpdateDelay(stopUpdate),
       updatedAt: vehicle.timestamp ? new Date(Number(vehicle.timestamp.low ?? vehicle.timestamp) * 1000) : undefined
     });
   }
@@ -201,7 +213,19 @@ export async function getLine5Stations(): Promise<TripStopSummary[]> {
 }
 
 export async function getLine5Departures(stopId: string, direction: "eastbound" | "westbound"): Promise<VehicleSummary[]> {
-  const vehicles = await getVehicleSummaries({ routeShortName: "5", trackedOnly: true });
+  const [vehicles, tripFeed] = await Promise.all([
+    getVehicleSummaries({ routeShortName: "5", trackedOnly: true }),
+    fetchRealtimeFeed(config.TTC_TRIP_UPDATES_URL)
+  ]);
+  const tripUpdates = new Map<string, any>();
+  for (const entity of tripFeed.entity ?? []) {
+    const tripUpdate = entity.tripUpdate;
+    const tripId = tripUpdate?.trip?.tripId;
+    if (tripId) {
+      tripUpdates.set(tripId, tripUpdate);
+    }
+  }
+
   const matches: VehicleSummary[] = [];
   for (const vehicle of vehicles) {
     if (!vehicle.tripId) {
@@ -221,7 +245,17 @@ export async function getLine5Departures(stopId: string, direction: "eastbound" 
     }
     const current = vehicle.currentStopSequence ?? 0;
     if (current <= target.stopSequence) {
-      matches.push(vehicle);
+      const tripUpdate = tripUpdates.get(vehicle.tripId);
+      const targetUpdate = realtimeStopUpdate(tripUpdate, target.stopSequence, stopId);
+      const targetEta = stopUpdateTime(targetUpdate);
+      matches.push({
+        ...vehicle,
+        eta: targetEta ? new Date(targetEta * 1000) : vehicle.eta,
+        delaySeconds: stopUpdateDelay(targetUpdate) ?? vehicle.delaySeconds,
+        nextStopId: stopId,
+        nextStop: target.stopName,
+        scheduledTime: target.scheduledTime
+      });
     }
   }
   return matches.sort((a, b) => (a.eta?.getTime() ?? Infinity) - (b.eta?.getTime() ?? Infinity)).slice(0, 6);

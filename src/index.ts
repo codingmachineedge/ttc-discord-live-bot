@@ -4,6 +4,7 @@ import {
   Client,
   Events,
   GatewayIntentBits,
+  Message,
   ModalBuilder,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
@@ -48,7 +49,7 @@ function chunksFromText(text: string): string[] {
   const chunks: string[] = [];
   let remaining = text;
   while (remaining.length > 1900) {
-    const splitAt = Math.max(remaining.lastIndexOf("\n", 1900), 1);
+    const splitAt = remaining.lastIndexOf("\n", 1900) > 0 ? remaining.lastIndexOf("\n", 1900) : 1900;
     chunks.push(remaining.slice(0, splitAt).trimEnd());
     remaining = remaining.slice(splitAt).trimStart();
   }
@@ -56,6 +57,28 @@ function chunksFromText(text: string): string[] {
     chunks.push(remaining.trimEnd());
   }
   return chunks;
+}
+
+const feedbackAcknowledgements = new Map<string, number>();
+
+async function handleGeneralFeedbackMessage(message: Message): Promise<void> {
+  if (!message.guild || message.author.bot) {
+    return;
+  }
+  const isConfiguredGeneral = config.GENERAL_CHANNEL_ID && message.channelId === config.GENERAL_CHANNEL_ID;
+  const isNamedGeneral = "name" in message.channel && message.channel.name?.toLowerCase() === "general";
+  if (!isConfiguredGeneral && !isNamedGeneral) {
+    return;
+  }
+
+  const key = `${message.guild.id}:${message.author.id}`;
+  const now = Date.now();
+  const last = feedbackAcknowledgements.get(key) ?? 0;
+  if (now - last < 5 * 60 * 1000) {
+    return;
+  }
+  feedbackAcknowledgements.set(key, now);
+  await message.reply(`<@${message.author.id}> read. I will treat general-channel TTC bot comments as feedback.`);
 }
 
 async function handleCommand(interaction: any): Promise<void> {
@@ -194,11 +217,15 @@ async function handleCommand(interaction: any): Promise<void> {
         await interaction.reply({ content: `Still following vehicle ${session.vehicleNumber}, but it is not in the live feed right now.`, ephemeral: true });
         return;
       }
+      const announcementChunks = chunksFromText(buildTripAnnouncement(session, vehicle, alerts));
       await interaction.reply({
-        content: buildTripAnnouncement(session, vehicle, alerts),
+        content: announcementChunks[0],
         files: [makeProgressAttachment(session, vehicle, stops)],
         ephemeral: true
       });
+      for (const chunk of announcementChunks.slice(1)) {
+        await interaction.followUp({ content: chunk, ephemeral: true });
+      }
       return;
     }
 
@@ -219,7 +246,7 @@ async function handleCommand(interaction: any): Promise<void> {
         .addOptions(stations.slice(0, 25).map((station) =>
           new StringSelectMenuOptionBuilder()
             .setLabel(station.stopName.slice(0, 100))
-            .setValue(`${station.stopId}|${station.stopName}`.slice(0, 100))
+            .setValue(station.stopId.slice(0, 100))
         ));
       await interaction.editReply({
         content: "Choose the Line 5 station for the departure board.",
@@ -240,9 +267,11 @@ async function handleLine5BoardStationSelect(interaction: any): Promise<void> {
   if (!interaction.isStringSelectMenu() || interaction.customId !== "line5-board-station") {
     return;
   }
-  const [stopId, stationName] = interaction.values[0].split("|");
+  const stopId = interaction.values[0];
+  const stations = await getLine5Stations();
+  const stationName = stations.find((station) => station.stopId === stopId)?.stopName ?? stopId;
   const directionMenu = new StringSelectMenuBuilder()
-    .setCustomId(`line5-board-direction:${stopId}:${stationName}`)
+    .setCustomId(`line5-board-direction:${stopId}`)
     .setPlaceholder("Select direction")
     .addOptions(
       new StringSelectMenuOptionBuilder().setLabel("Eastbound to Kennedy").setValue("eastbound"),
@@ -263,11 +292,13 @@ async function handleLine5BoardDirectionSelect(interaction: any): Promise<void> 
     return;
   }
   await interaction.deferUpdate();
-  const [, stopId, stationName] = interaction.customId.split(":");
+  const [, stopId] = interaction.customId.split(":");
+  const stations = await getLine5Stations();
+  const stationName = stations.find((station) => station.stopId === stopId)?.stopName ?? stopId;
   const direction = interaction.values[0] as "eastbound" | "westbound";
   const thread = await interaction.channel.threads.create({
     name: `Line 5 ${stationName} ${direction}`,
-    autoArchiveDuration: 60,
+    autoArchiveDuration: 1440,
     reason: "Live Line 5 departure board"
   });
   const session = {
@@ -380,49 +411,49 @@ async function handleFollowDestinationSelect(interaction: any): Promise<void> {
 }
 
 async function startAlertPolling(client: Client): Promise<void> {
-  let lastFingerprint = "";
+  const lastFingerprints = new Map<string, string>();
   const poll = async () => {
-    try {
-      const guild = config.DISCORD_GUILD_ID ? await client.guilds.fetch(config.DISCORD_GUILD_ID) : client.guilds.cache.first();
-      if (!guild) {
-        console.error("No guild found for alert polling.");
-        return;
-      }
-      const guildSettings = await getGuildSettings(guild.id);
-      const alerts = await getAlerts();
-      const fingerprint = alertFingerprint(alerts);
-      if (fingerprint !== lastFingerprint) {
-        lastFingerprint = fingerprint;
-        const mentions = formatMentions(guildSettings.alertSubscriberIds);
-        const categoryChannels = {
-          subwayLrt: guildSettings.subwayLrtAlertsChannelId,
-          busStreetcar: guildSettings.busStreetcarAlertsChannelId,
-          accessibility: guildSettings.accessibilityAlertsChannelId,
-          general: guildSettings.generalAlertsChannelId
-        };
-        const grouped = new Map<string, string[]>();
-        for (const alert of alerts) {
-          const key = alertCategory(alert);
-          const channelId = categoryChannels[key] || guildSettings.alertsChannelId || config.ALERT_CHANNEL_ID;
-          if (!channelId) {
-            continue;
+    const guilds = config.DISCORD_GUILD_ID
+      ? [await client.guilds.fetch(config.DISCORD_GUILD_ID)]
+      : [...client.guilds.cache.values()];
+    for (const guild of guilds) {
+      try {
+        const guildSettings = await getGuildSettings(guild.id);
+        const alerts = await getAlerts();
+        const fingerprint = alertFingerprint(alerts);
+        if (fingerprint !== lastFingerprints.get(guild.id)) {
+          lastFingerprints.set(guild.id, fingerprint);
+          const mentions = formatMentions(guildSettings.alertSubscriberIds);
+          const categoryChannels = {
+            subwayLrt: guildSettings.subwayLrtAlertsChannelId,
+            busStreetcar: guildSettings.busStreetcarAlertsChannelId,
+            accessibility: guildSettings.accessibilityAlertsChannelId,
+            general: guildSettings.generalAlertsChannelId
+          };
+          const grouped = new Map<string, string[]>();
+          for (const alert of alerts) {
+            const key = alertCategory(alert);
+            const channelId = categoryChannels[key] || guildSettings.alertsChannelId || config.ALERT_CHANNEL_ID;
+            if (!channelId) {
+              continue;
+            }
+            const cards = grouped.get(channelId) ?? [];
+            cards.push(formatAlertCard(alert));
+            grouped.set(channelId, cards);
           }
-          const cards = grouped.get(channelId) ?? [];
-          cards.push(formatAlertCard(alert));
-          grouped.set(channelId, cards);
-        }
 
-        for (const [channelId, cards] of grouped) {
-          const channel = await client.channels.fetch(channelId);
-          if (!channel || channel.type === ChannelType.DM || !("send" in channel)) {
-            continue;
+          for (const [channelId, cards] of grouped) {
+            const channel = await client.channels.fetch(channelId);
+            if (!channel || channel.type === ChannelType.DM || !("send" in channel)) {
+              continue;
+            }
+            const body = `${mentions ? `${mentions}\n` : ""}${cards.join("\n")}`;
+            await sendChunks(channel as TextChannel, chunksFromText(body));
           }
-          const body = `${mentions ? `${mentions}\n` : ""}${cards.join("\n")}`;
-          await sendChunks(channel as TextChannel, chunksFromText(body));
         }
+      } catch (error) {
+        console.error(`Alert polling failed in ${guild.name}`, error);
       }
-    } catch (error) {
-      console.error("Alert polling failed", error);
     }
   };
 
@@ -444,14 +475,22 @@ async function startDepartureBoardPolling(client: Client): Promise<void> {
             await removeDepartureBoard(guild.id, board.threadId);
             continue;
           }
+          if ("archived" in thread && thread.archived && "setArchived" in thread) {
+            await thread.setArchived(false, "Updating live Line 5 departure board");
+          }
           const message = await thread.messages.fetch(board.messageId);
           const vehicles = await getLine5Departures(board.stationStopId, board.direction);
           await message.edit({
             content: formatDepartureBoardText(board, vehicles),
+            attachments: [],
             files: [makeDepartureBoardAttachment(board, vehicles)]
           });
         } catch (error) {
           console.error(`Departure board update failed for ${board.threadId}`, error);
+          const code = (error as any)?.code;
+          if ([10003, 10008, 50001, 50013].includes(code)) {
+            await removeDepartureBoard(guild.id, board.threadId);
+          }
         }
       }
     }
@@ -516,7 +555,7 @@ async function main(): Promise<void> {
   await getStaticGtfs();
 
   const client = new Client({
-    intents: [GatewayIntentBits.Guilds]
+    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent]
   });
 
   client.once(Events.ClientReady, async (readyClient) => {
@@ -554,6 +593,7 @@ async function main(): Promise<void> {
       }
     }
   });
+  client.on(Events.MessageCreate, handleGeneralFeedbackMessage);
   await client.login(config.DISCORD_TOKEN);
 }
 

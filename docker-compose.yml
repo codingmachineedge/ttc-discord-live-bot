@@ -8,5 +8,21 @@ services:
     volumes:
       - ttc-cache:/app/.data
 
+  ttc-live-test-bot:
+    build: .
+    container_name: ttc-discord-live-test-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: >
+      sh -c 'if [ -z "$$TEST_DISCORD_TOKEN" ]; then
+        echo "TEST_DISCORD_TOKEN not set; live test scheduler disabled.";
+        sleep infinity;
+      fi;
+      while true; do
+        node scripts/live-test-bot.mjs || true;
+        sleep 1800;
+      done'
+
 volumes:
   ttc-cache:
