@@ -6,6 +6,7 @@ const envSchema = z.object({
   DISCORD_CLIENT_ID: z.string().min(1),
   DISCORD_GUILD_ID: z.string().optional().default(""),
   ALERT_CHANNEL_ID: z.string().optional().default(""),
+  AUTO_SETUP_CHANNELS: z.coerce.boolean().default(true),
   POLL_INTERVAL_SECONDS: z.coerce.number().int().min(15).default(30),
   COMMAND_REGISTER_MODE: z.enum(["guild", "global"]).default("guild"),
   TTC_VEHICLE_POSITIONS_URL: z.string().url().default("https://bustime.ttc.ca/gtfsrt/vehicles"),

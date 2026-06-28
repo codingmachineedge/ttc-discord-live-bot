@@ -1,6 +1,6 @@
 import { REST } from "@discordjs/rest";
 import { Routes } from "discord-api-types/v10";
-import { SlashCommandBuilder } from "discord.js";
+import { PermissionFlagsBits, SlashCommandBuilder } from "discord.js";
 import { config } from "./config.js";
 
 export const commandDefinitions = [
@@ -18,7 +18,30 @@ export const commandDefinitions = [
     ),
   new SlashCommandBuilder()
     .setName("ttc-status")
-    .setDescription("Show bot feed status and tracked routes.")
+    .setDescription("Show bot feed status and tracked routes."),
+  new SlashCommandBuilder()
+    .setName("ttc-setup")
+    .setDescription("Create or repair the TTC Live category and channels.")
+    .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+  new SlashCommandBuilder()
+    .setName("ttc-settings")
+    .setDescription("Manage your TTC alert notification settings.")
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("alerts")
+        .setDescription("Turn TTC service alert pings on or off for yourself.")
+        .addBooleanOption((option) =>
+          option
+            .setName("enabled")
+            .setDescription("Whether to ping you when TTC alerts change.")
+            .setRequired(true)
+        )
+    )
+    .addSubcommand((subcommand) =>
+      subcommand
+        .setName("view")
+        .setDescription("Show your current TTC notification settings.")
+    )
 ].map((command) => command.toJSON());
 
 export async function registerCommands(): Promise<void> {
