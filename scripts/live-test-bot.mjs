@@ -60,6 +60,27 @@ async function send(channel, content) {
   });
 }
 
+async function sendImageStep(channel, content) {
+  const pngBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lBvY7wAAAABJRU5ErkJggg==";
+  const form = new FormData();
+  form.append("payload_json", JSON.stringify({
+    content,
+    attachments: [{ id: "0", filename: "live-test-image.png" }]
+  }));
+  form.append("files[0]", new Blob([Buffer.from(pngBase64, "base64")], { type: "image/png" }), "live-test-image.png");
+
+  const response = await fetch(`${api}/channels/${channel.id}/messages`, {
+    method: "POST",
+    headers: { Authorization: `Bot ${token}` },
+    body: form
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`POST image step failed: ${response.status} ${body}`);
+  }
+  return response.json();
+}
+
 async function main() {
   const guild = await resolveGuild();
   const channel = await resolveGeneralChannel(guild);
@@ -77,6 +98,8 @@ async function main() {
     await send(channel, step);
     await new Promise((resolve) => setTimeout(resolve, 1500));
   }
+  await sendImageStep(channel, `Live test ${runId}: image/file attachment test for TTC bot feedback pickup.`);
+  await new Promise((resolve) => setTimeout(resolve, 1500));
 
   const messages = await discord(`/channels/${channel.id}/messages?limit=20`);
   const acknowledgements = messages.filter((message) =>
@@ -85,7 +108,8 @@ async function main() {
   console.log(JSON.stringify({
     guildId: guild.id,
     channelId: channel.id,
-    sentSteps: steps.length,
+    sentSteps: steps.length + 1,
+    imageMessagesSeen: messages.filter((message) => message.attachments?.length).length,
     acknowledgementsSeen: acknowledgements.length
   }, null, 2));
 }

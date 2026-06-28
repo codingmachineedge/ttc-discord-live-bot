@@ -62,7 +62,7 @@ docker compose up -d --build
 docker compose logs -f
 ```
 
-If `TEST_DISCORD_TOKEN` is present in `.env`, Docker Compose also starts a scheduled live-test bot that posts test steps to the general channel every 15 minutes.
+If `TEST_DISCORD_TOKEN` is present in `.env`, Docker Compose also starts a scheduled live-test bot that posts test steps, including an image attachment, to the general channel every 15 minutes.
 
 ## Run Locally
 

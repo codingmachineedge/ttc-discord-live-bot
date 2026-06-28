@@ -166,8 +166,10 @@ export async function makeAlertAttachment(alert: AlertSummary): Promise<Attachme
   <rect width="1200" height="780" rx="32" fill="#7f1d1d"/>
   <rect x="28" y="28" width="1144" height="724" rx="24" fill="#111827" stroke="#ef4444" stroke-width="10"/>
   <rect x="48" y="48" width="1104" height="34" rx="12" fill="#dc2626"/>
+  <g font-family="DejaVu Sans, Arial, sans-serif">
   <text x="1132" y="73" font-size="20" fill="#fee2e2" text-anchor="end">LIVE</text>
   ${textLines}
+  </g>
 </svg>`;
 
   const png = await sharp(Buffer.from(svg, "utf8"))
