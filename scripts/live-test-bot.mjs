@@ -100,17 +100,26 @@ async function main() {
   }
   await sendImageStep(channel, `Live test ${runId}: image/file attachment test for TTC bot feedback pickup.`);
   await new Promise((resolve) => setTimeout(resolve, 1500));
+  await send(channel, `Live test ${runId}: leaving eastbound from Eglinton. Please recommend the lowest-wait trip.`);
+  await new Promise((resolve) => setTimeout(resolve, 12000));
 
-  const messages = await discord(`/channels/${channel.id}/messages?limit=20`);
+  const messages = await discord(`/channels/${channel.id}/messages?limit=30`);
   const acknowledgements = messages.filter((message) =>
     message.content?.includes("picked up and read. Feature change, fix, or feedback acknowledged.")
+  );
+  const recommendations = messages.filter((message) =>
+    message.content?.includes("recommended eastbound trip from **Eglinton Station**")
   );
   console.log(JSON.stringify({
     guildId: guild.id,
     channelId: channel.id,
-    sentSteps: steps.length + 1,
+    sentSteps: steps.length + 2,
     imageMessagesSeen: messages.filter((message) => message.attachments?.length).length,
-    acknowledgementsSeen: acknowledgements.length
+    acknowledgementsSeen: acknowledgements.length,
+    recommendationsSeen: recommendations.length,
+    recommendationGifsSeen: recommendations.filter((message) =>
+      message.attachments?.some((attachment) => attachment.filename?.endsWith(".gif"))
+    ).length
   }, null, 2));
 }
 
