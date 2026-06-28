@@ -2,6 +2,8 @@
 
 This document describes the user-facing behavior of the TTC Discord Live Bot.
 
+For per-feature pages, see [features/README.md](features/README.md).
+
 ## Commands
 
 | Command | Behavior |
