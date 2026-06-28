@@ -88,11 +88,13 @@ export function formatVehicles(vehicles: VehicleSummary[]): string[] {
 export function formatAlerts(alerts: AlertSummary[]): string[] {
   const serviceAlerts = alerts.filter(isServiceDisruptionAlert);
   if (!serviceAlerts.length) {
-    return ["No active TTC service alerts found in the current GTFS-Realtime alert feed."];
+    return ["No active TTC service alerts found after checking TTC.ca status and the current realtime alert feed."];
   }
 
   return serviceAlerts.map((alert) => {
-    const routes = alert.affectedRoutes.length ? alert.affectedRoutes.join(", ") : "system-wide/unspecified";
+    const routes = alertCategory(alert) === "accessibility"
+      ? accessibilityScope(alert)
+      : alert.affectedRoutes.length ? alert.affectedRoutes.join(", ") : "system-wide/unspecified";
     const meta = [alert.effect, alert.cause, alert.severity].filter(Boolean).join(", ");
     const active = alert.activePeriods.length ? ` Active: ${alert.activePeriods.join("; ")}.` : "";
     const description = alert.description ? ` ${alert.description}` : "";

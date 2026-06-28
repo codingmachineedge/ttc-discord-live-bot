@@ -33,6 +33,7 @@ import {
 import { buildTripAnnouncement, makeTripFollowerAttachments, upcomingStopOptions } from "./tripFollower.js";
 import { buildEglintonEastboundRecommendation, isEglintonEastboundRecommendationRequest } from "./tripRecommendation.js";
 import { findVehicleByNumber, getAlerts, getLine5Departures, getLine5Stations, getStaticGtfs, getTripStops, getVehicles } from "./ttcClient.js";
+import { filterAlertsAgainstTtcWebsite, formatTtcWebsiteStatuses, getTtcWebsiteRouteStatuses } from "./ttcWebsite.js";
 
 async function replyChunks(interaction: any, chunks: string[], ephemeral = false): Promise<void> {
   const [first, ...rest] = chunks;
@@ -106,7 +107,11 @@ async function handleCommand(interaction: any): Promise<void> {
   try {
     if (interaction.commandName === "ttc-alerts") {
       await interaction.deferReply();
-      const alerts = await getAlerts();
+      const [rawAlerts, websiteStatuses] = await Promise.all([
+        getAlerts(),
+        getTtcWebsiteRouteStatuses()
+      ]);
+      const alerts = filterAlertsAgainstTtcWebsite(rawAlerts, websiteStatuses);
       const chunks = chunkMessages(formatAlerts(alerts), "**Current TTC Alerts**");
       await interaction.editReply(chunks[0]);
       for (const chunk of chunks.slice(1)) {
@@ -130,6 +135,7 @@ async function handleCommand(interaction: any): Promise<void> {
     if (interaction.commandName === "ttc-status") {
       const guildSettings = interaction.guildId ? await getGuildSettings(interaction.guildId) : undefined;
       const staticGtfs = await getStaticGtfs();
+      const websiteStatuses = await getTtcWebsiteRouteStatuses();
       const tracked = [...staticGtfs.routes.values()]
         .filter((route) => trackedRouteShortNames.has(route.shortName))
         .map((route) => `${route.shortName} ${route.longName}`)
@@ -141,6 +147,9 @@ async function handleCommand(interaction: any): Promise<void> {
           `Alert channel: ${guildSettings?.alertsChannelId ? `<#${guildSettings.alertsChannelId}>` : config.ALERT_CHANNEL_ID || "not configured"}`,
           `Alert subscribers: ${guildSettings?.alertSubscriberIds.length ?? 0}`,
           `Auto setup channels: ${config.AUTO_SETUP_CHANNELS ? "on" : "off"}`,
+          "**TTC.ca subway/LRT status**",
+          ...formatTtcWebsiteStatuses(websiteStatuses),
+          `Source: ${config.TTC_WEBSITE_STATUS_URL}`,
           "**Tracked routes**",
           tracked || "No tracked routes found in static GTFS."
         ].join("\n")
@@ -459,7 +468,11 @@ async function startAlertPolling(client: Client): Promise<void> {
     for (const guild of guilds) {
       try {
         const guildSettings = await getGuildSettings(guild.id);
-        const alerts = (await getAlerts()).filter(isServiceDisruptionAlert);
+        const [rawAlerts, websiteStatuses] = await Promise.all([
+          getAlerts(),
+          getTtcWebsiteRouteStatuses()
+        ]);
+        const alerts = filterAlertsAgainstTtcWebsite(rawAlerts, websiteStatuses).filter(isServiceDisruptionAlert);
         const activeIds = new Set(alerts.map((alert) => alert.id));
         const existingPosts = guildSettings.alertPosts ?? [];
         const resolvedPosts = existingPosts.filter((post) => !activeIds.has(post.alertId));

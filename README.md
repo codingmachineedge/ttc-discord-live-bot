@@ -1,10 +1,10 @@
 # TTC Discord Live Bot
 
-A Dockerized Discord bot that tracks live TTC GTFS-Realtime service alerts, delays, disruptions, and subway/LRT vehicle positions.
+A Dockerized Discord bot that tracks TTC.ca service status plus TTC realtime alerts, delays, disruptions, and subway/LRT vehicle positions.
 
 ## What it Shows
 
-- Current TTC service alerts, delays, and disruptions.
+- Current TTC service alerts, delays, and disruptions, guarded against TTC.ca's passenger-facing status dashboard.
 - Live subway/LRT vehicles for tracked lines when TTC publishes them in the configured GTFS-Realtime vehicle feed.
 - Vehicle number/label when the TTC feed provides it.
 - Current GPS position with a Google Maps link.
@@ -20,7 +20,7 @@ A Dockerized Discord bot that tracks live TTC GTFS-Realtime service alerts, dela
 - Rail/LRT trip follower messages include next-station details for door side, elevators, escalators, washrooms, and station depth when the bot has a configured or inferred value.
 - General-channel feedback reader that pings users back after reading TTC bot feedback in `#general` or `GENERAL_CHANNEL_ID`.
 
-The bot uses TTC's public GTFS-Realtime feeds and Toronto Open Data's static GTFS schedule. Some fields are feed-dependent: if TTC does not publish a vehicle label, next stop, ETA, or delay for a vehicle at that moment, the bot reports `n/a` instead of inventing data. TTC's public BusTime feed is officially described for buses and streetcars; the default route filter includes subway/LRT line short names so the bot will surface those vehicles if/when the configured feed contains them.
+The bot uses TTC.ca for the passenger-facing route status dashboard, TTC's public GTFS-Realtime feeds for structured alert/vehicle/trip data, and Toronto Open Data's static GTFS schedule. Some fields are feed-dependent: if TTC does not publish a vehicle label, next stop, ETA, or delay for a vehicle at that moment, the bot reports `n/a` instead of inventing data. TTC's public BusTime feed is officially described for buses and streetcars; the default route filter includes subway/LRT line short names so the bot will surface those vehicles if/when the configured feed contains them.
 
 ## Discord Commands
 
@@ -36,6 +36,8 @@ The bot uses TTC's public GTFS-Realtime feeds and Toronto Open Data's static GTF
 - `/ttc-follow status` - show your current trip follower state with a route graphic.
 - `/ttc-follow stop` - stop following your current trip.
 - `/ttc-line5-board start` - pick a Line 5 station and direction, then create a thread with a live-updating departure board.
+- `/ttc-recommend eglinton-eastbound` - recommend the lower-wait eastbound trip from Eglinton using live Line 5 data and the configured transfer choices.
+- In `#general`: `leaving eastbound from Eglinton` - asks the bot for the same recommendation by normal message.
 
 ## Setup
 
@@ -103,6 +105,7 @@ TEST_DISCORD_TOKEN=temporary_test_bot_token npm run live-test
 | `TTC_VEHICLE_POSITIONS_URL` | TTC public feed | GTFS-Realtime vehicle positions endpoint. |
 | `TTC_TRIP_UPDATES_URL` | TTC public feed | GTFS-Realtime trip updates endpoint. |
 | `TTC_ALERTS_URL` | TTC public feed | GTFS-Realtime alerts endpoint. |
+| `TTC_WEBSITE_STATUS_URL` | `https://www.ttc.ca/` | TTC.ca passenger-facing status dashboard used to verify subway/LRT service status. |
 | `TTC_STATIC_GTFS_URL` | Toronto Open Data zip | Static GTFS schedule zip. |
 
 ## Notes
