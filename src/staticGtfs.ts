@@ -1,9 +1,10 @@
 import { parse } from "csv-parse/sync";
 import unzipper from "unzipper";
-import { config } from "./config.js";
+import { config, trackedRouteShortNames } from "./config.js";
 import type { RouteInfo, StaticGtfs, StopInfo, StopTimeInfo, TripInfo } from "./types.js";
 
 type CsvRow = Record<string, string>;
+const extraTripRouteShortNames = new Set(["17", "68"]);
 
 function clean(value: string | undefined): string {
   return value?.trim() ?? "";
@@ -70,6 +71,12 @@ export async function loadStaticGtfs(): Promise<StaticGtfs> {
     }
   }
 
+  const tripRouteIds = new Set(
+    [...routes.values()]
+      .filter((route) => trackedRouteShortNames.has(route.shortName) || extraTripRouteShortNames.has(route.shortName))
+      .map((route) => route.id)
+  );
+
   const trips = new Map<string, TripInfo>();
   for (const row of tripRows) {
     const routeId = clean(row.route_id);
@@ -81,7 +88,7 @@ export async function loadStaticGtfs(): Promise<StaticGtfs> {
       directionId: row.direction_id ? Number(row.direction_id) : undefined,
       shapeId: clean(row.shape_id)
     };
-    if (trip.id) {
+    if (trip.id && tripRouteIds.has(routeId)) {
       trips.set(trip.id, trip);
     }
   }
