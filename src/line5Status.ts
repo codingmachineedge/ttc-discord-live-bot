@@ -131,7 +131,14 @@ export function formatLine5StatusText(data: Line5StatusData): string {
   }
   lines.push(`**Stops on the line:** ${sh.stopCount}`);
 
-  const ref = data.eglinton ? data.eglinton.stopName : "Eglinton";
+  // Eglinton is a single interchange; strip the directional platform suffix so the
+  // westbound section doesn't read "from Eglinton Station Eastbound Platform".
+  const ref = data.eglinton
+    ? data.eglinton.stopName
+        .replace(/\s+(Eastbound|Westbound|East|West)\s+Platform$/i, " Station")
+        .replace(/\s+LRT\s+Platform$/i, " Station")
+        .replace(/\s+Station\s+Station$/i, " Station")
+    : "Eglinton";
   lines.push("");
   lines.push(`**Next eastbound (to Kennedy)** from ${ref}:`);
   lines.push(data.eastbound.length ? data.eastbound.slice(0, 3).map((v) => `- ${departureLine(v)}`).join("\n") : "- No upcoming eastbound trains.");

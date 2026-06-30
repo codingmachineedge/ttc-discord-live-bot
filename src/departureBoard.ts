@@ -60,16 +60,23 @@ export async function makeDepartureBoardAttachment(session: DepartureBoardSessio
   const width = 1100;
   const height = 620;
   const rows = vehicles.slice(0, 5);
+  // Fixed, non-overlapping column bands (inner row spans x=86..1010):
+  //   headsign  start  86          (truncated so it can't run into the source band)
+  //   source    start  500         (e.g. "SCHEDULED" / "CAR v2")
+  //   MINS      end    830
+  //   time      end    1006
   const rowSvg = rows.length ? rows.map((vehicle, index) => {
     const y = 220 + index * 72;
     const etaMinutes = formatEtaMinutes(vehicle.eta).toUpperCase();
     const etaTime = formatEtaTime(vehicle.eta);
     const carLabel = vehicle.source === "schedule" ? "SCHEDULED" : `CAR ${vehicle.vehicleLabel ?? vehicle.vehicleId}`;
+    const headsignRaw = vehicle.headsign ?? session.direction.toUpperCase();
+    const headsign = headsignRaw.length > 22 ? `${headsignRaw.slice(0, 21).trimEnd()}…` : headsignRaw;
     return `
       <rect x="54" y="${y - 42}" width="992" height="58" rx="12" fill="${index % 2 === 0 ? "#111827" : "#1f2937"}"/>
-      <text x="86" y="${y}" font-size="34" font-weight="800" fill="#facc15">${escapeXml(vehicle.headsign ?? session.direction.toUpperCase())}</text>
-      <text x="610" y="${y}" font-size="24" font-weight="800" fill="#cbd5e1" text-anchor="middle">${escapeXml(carLabel)}</text>
-      <text x="820" y="${y}" font-size="34" font-weight="900" fill="#ffffff" text-anchor="end">${escapeXml(etaMinutes)}</text>
+      <text x="86" y="${y}" font-size="34" font-weight="800" fill="#facc15">${escapeXml(headsign)}</text>
+      <text x="500" y="${y}" font-size="22" font-weight="800" fill="#cbd5e1">${escapeXml(carLabel)}</text>
+      <text x="830" y="${y}" font-size="34" font-weight="900" fill="#ffffff" text-anchor="end">${escapeXml(etaMinutes)}</text>
       <text x="1010" y="${y}" font-size="34" font-weight="900" fill="#ffffff" text-anchor="end">${escapeXml(etaTime)}</text>`;
   }).join("\n") : `
       <text x="550" y="335" font-size="34" font-weight="800" fill="#ffffff" text-anchor="middle">NO DEPARTURES AVAILABLE</text>
