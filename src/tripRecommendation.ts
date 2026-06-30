@@ -5,6 +5,7 @@ import type { AlertSummary, TripStopSummary, VehicleSummary } from "./types.js";
 import { getAlerts, getLine5Departures, getLine5Stations, getLiveDeparturesNearStop, getLiveVehiclesNearStop, getTripStops, type LiveDepartureSummary, type NearbyVehicleSummary } from "./ttcClient.js";
 import { makeTripFollowerAttachments } from "./tripFollower.js";
 import { cleanAlertTitle } from "./line5Status.js";
+import { makeLine5RouteMapAttachment } from "./line5Map.js";
 import type { TripFollowSession } from "./settingsStore.js";
 
 const { applyPalette, GIFEncoder, quantize } = gifenc;
@@ -380,7 +381,7 @@ export async function buildEglintonEastboundRecommendation(userId?: string): Pro
   const vehicleName = realVehicleNumber(boardingVehicle);
   const line5Eta = boardWait === undefined
     ? "No live Line 5 vehicle ETA is available from Eglinton right now."
-    : `Board the next eastbound Line 5 vehicle in about **${boardWait} min**${vehicleName ? `: vehicle **${vehicleName}**` : ""}.`;
+    : `Board the next eastbound Line 5 vehicle in about **${boardWait} min**${vehicleName ? `: vehicle **${vehicleName}**` : " — Line 5 trains don't broadcast a car/vehicle number, so there's nothing to read off the train"}.`;
 
   const lines = [
     userId ? `<@${userId}> recommended eastbound trip from **Eglinton Station**:` : "Recommended eastbound trip from **Eglinton Station**:",
@@ -432,7 +433,18 @@ export async function buildEglintonEastboundRecommendation(userId?: string): Pro
     };
     files.push(...await makeTripFollowerAttachments(session, boardingVehicle, tripStops, alerts as AlertSummary[]));
   } else {
-    lines.push("", "**Line 5 trip map GIF**", "- The recommendation GIF is attached. The stop-by-stop Line 5 trip map is not attached because the active Line 5 fallback source does not publish a TTC GTFS trip ID for this vehicle.");
+    // Line 5's fallback source exposes no TTC GTFS trip id AND no car number, so a
+    // vehicle-tracking follower can't lock onto this specific train. Auto-attach a Line 5
+    // trip map marking BOARD HERE -> ALIGHT HERE instead — that's how you follow a Line 5
+    // trip when there's no vehicle number to enter.
+    const destStation = stopByPattern(stations, best.option.line5StopPattern);
+    files.push(await makeLine5RouteMapAttachment(stations, eglinton?.stopId, "eastbound", destStation?.stopId));
+    lines.push(
+      "",
+      "**Follow your Line 5 trip**",
+      `- Line 5 trains don't broadcast a car/vehicle number, so there's nothing to enter for the train itself. Follow your trip on the map below — it marks **BOARD HERE** at Eglinton and **ALIGHT HERE** at ${best.option.line5Destination}${best.inVehicleMinutes !== undefined ? ` (~${best.inVehicleMinutes} min on board)` : ""}.`,
+      "- For the connecting bus (buses *do* show a car number), tap **Follow this trip live** and enter that bus's number to get live stop-by-stop tracking."
+    );
   }
 
   return {

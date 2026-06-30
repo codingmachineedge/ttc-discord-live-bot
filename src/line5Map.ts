@@ -36,9 +36,16 @@ export function cleanStationName(name: string): string {
 export async function makeLine5RouteMapAttachment(
   stations: TripStopSummary[],
   highlightStopId?: string,
-  direction?: "eastbound" | "westbound"
+  direction?: "eastbound" | "westbound",
+  destStopId?: string
 ): Promise<AttachmentBuilder> {
   const names = stations.map((stop) => cleanStationName(stop.stopName));
+  // When both a board stop and a destination stop are given, render the ridden segment
+  // as a brighter overlay so the trip reads as "board here → ride → alight here" — this
+  // is how a Line 5 trip is followed when the feed exposes no vehicle/car number.
+  const boardIndex = highlightStopId !== undefined ? stations.findIndex((s) => s.stopId === highlightStopId) : -1;
+  const destIndex = destStopId !== undefined ? stations.findIndex((s) => s.stopId === destStopId) : -1;
+  const hasSegment = boardIndex >= 0 && destIndex >= 0 && boardIndex !== destIndex;
   const rowHeight = 44;
   const topPad = 150;
   const bottomPad = 70;
@@ -60,27 +67,33 @@ export async function makeLine5RouteMapAttachment(
   const spine = names.length > 1
     ? `<line x1="${spineX}" y1="${dotY(0)}" x2="${spineX}" y2="${dotY(lastIndex)}" stroke="${LINE5_ORANGE}" stroke-width="10" stroke-linecap="round"/>`
     : "";
+  const tripSegment = hasSegment
+    ? `<line x1="${spineX}" y1="${dotY(Math.min(boardIndex, destIndex))}" x2="${spineX}" y2="${dotY(Math.max(boardIndex, destIndex))}" stroke="#facc15" stroke-width="16" stroke-linecap="round" opacity="0.85"/>`
+    : "";
 
   const rows = names.map((name, index) => {
     const y = dotY(index);
     const isTerminus = index === 0 || index === lastIndex;
     const isHighlight = highlightStopId !== undefined && stations[index]?.stopId === highlightStopId;
+    const isDest = destStopId !== undefined && stations[index]?.stopId === destStopId;
     const labelY = y + 9;
 
     const dot = isHighlight
       ? `<circle cx="${spineX}" cy="${y}" r="20" fill="#facc15" stroke="#ffffff" stroke-width="5"/>`
-      : isTerminus
-        ? `<circle cx="${spineX}" cy="${y}" r="15" fill="#ffffff" stroke="${LINE5_ORANGE}" stroke-width="6"/>`
-        : `<circle cx="${spineX}" cy="${y}" r="11" fill="#0b1220" stroke="#ffffff" stroke-width="5"/>`;
+      : isDest
+        ? `<circle cx="${spineX}" cy="${y}" r="20" fill="#22c55e" stroke="#ffffff" stroke-width="5"/>`
+        : isTerminus
+          ? `<circle cx="${spineX}" cy="${y}" r="15" fill="#ffffff" stroke="${LINE5_ORANGE}" stroke-width="6"/>`
+          : `<circle cx="${spineX}" cy="${y}" r="11" fill="#0b1220" stroke="#ffffff" stroke-width="5"/>`;
 
-    const labelFill = isHighlight ? "#facc15" : "#ffffff";
-    const labelWeight = isHighlight || isTerminus ? "900" : "700";
-    const labelSize = isHighlight ? 30 : isTerminus ? 28 : 26;
-    const numberFill = isHighlight ? "#facc15" : "#94a3b8";
-    const boardBadge = isHighlight
-      ? `<rect x="${width - 214}" y="${y - 21}" width="184" height="42" rx="10" fill="#facc15"/>
-         <text x="${width - 122}" y="${labelY}" font-size="22" font-weight="900" fill="#0b1220" text-anchor="middle">BOARD HERE</text>`
-      : "";
+    const labelFill = isHighlight ? "#facc15" : isDest ? "#4ade80" : "#ffffff";
+    const labelWeight = isHighlight || isDest || isTerminus ? "900" : "700";
+    const labelSize = isHighlight || isDest ? 30 : isTerminus ? 28 : 26;
+    const numberFill = isHighlight ? "#facc15" : isDest ? "#4ade80" : "#94a3b8";
+    const badge = (fill: string, textFill: string, text: string) =>
+      `<rect x="${width - 214}" y="${y - 21}" width="184" height="42" rx="10" fill="${fill}"/>
+         <text x="${width - 122}" y="${labelY}" font-size="22" font-weight="900" fill="${textFill}" text-anchor="middle">${text}</text>`;
+    const boardBadge = isHighlight ? badge("#facc15", "#0b1220", "BOARD HERE") : isDest ? badge("#22c55e", "#04210f", "ALIGHT HERE") : "";
 
     return `
       <text x="50" y="${labelY}" font-size="20" font-weight="700" fill="${numberFill}" text-anchor="end">${index + 1}</text>
@@ -99,6 +112,7 @@ export async function makeLine5RouteMapAttachment(
   <text x="156" y="86" font-size="44" font-weight="900" fill="#ffffff">LINE 5 EGLINTON</text>
   <text x="158" y="124" font-size="26" font-weight="800" fill="${LINE5_ORANGE}">${escapeXml(travelLabel)}</text>
   ${spine}
+  ${tripSegment}
   ${rows}
   </g>
 </svg>`;
