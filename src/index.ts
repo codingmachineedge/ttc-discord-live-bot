@@ -1,5 +1,7 @@
 import {
   ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   Client,
   Events,
@@ -320,9 +322,20 @@ async function handleCommand(interaction: any): Promise<void> {
         await interaction.deferReply();
         const recommendation = await buildEglintonEastboundRecommendation(interaction.user.id);
         const chunks = chunksFromText(recommendation.content);
+        // Offer to open a live trip follower for the train they board. Line 5 vehicles
+        // carry no trackable id, so the follower is keyed off the car number printed on
+        // the actual vehicle — the button opens the same entry modal as /ttc-follow start.
+        const followRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+          new ButtonBuilder()
+            .setCustomId("recommend-open-follow")
+            .setLabel("Follow this trip live")
+            .setEmoji("📍")
+            .setStyle(ButtonStyle.Primary)
+        );
         await interaction.editReply({
           content: chunks[0],
-          files: recommendation.files
+          files: recommendation.files,
+          components: [followRow]
         });
         for (const chunk of chunks.slice(1)) {
           await interaction.followUp(chunk);
@@ -358,6 +371,27 @@ async function handleLine5BoardStationSelect(interaction: any): Promise<void> {
     content: `Station selected: **${stationName}**. Choose direction.`,
     components: [new ActionRowBuilder<any>().addComponents(directionMenu)]
   });
+}
+
+// "Follow this trip live" button on a /ttc-recommend reply. Opens the same vehicle-number
+// modal as `/ttc-follow start` — the user reads the car number off the train they board
+// (Line 5 vehicles have no trackable id of their own), then the standard follower takes over.
+async function handleRecommendFollowButton(interaction: any): Promise<void> {
+  if (!interaction.guildId) {
+    await interaction.reply({ content: "Run this inside a server to follow a trip.", ephemeral: true });
+    return;
+  }
+  const modal = new ModalBuilder()
+    .setCustomId("ttc-follow-vehicle-modal")
+    .setTitle("Follow your TTC trip");
+  const vehicleInput = new TextInputBuilder()
+    .setCustomId("vehicle-number")
+    .setLabel("Vehicle number")
+    .setPlaceholder("Number printed on the train/bus you board")
+    .setRequired(true)
+    .setStyle(TextInputStyle.Short);
+  modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(vehicleInput));
+  await interaction.showModal(modal);
 }
 
 async function handleLine5BoardDirectionSelect(interaction: any): Promise<void> {
@@ -719,6 +753,10 @@ async function main(): Promise<void> {
         await handleLine5BoardStationSelect(interaction);
       } else if (interaction.customId.startsWith("line5-board-direction:")) {
         await handleLine5BoardDirectionSelect(interaction);
+      }
+    } else if (interaction.isButton()) {
+      if (interaction.customId === "recommend-open-follow") {
+        await handleRecommendFollowButton(interaction);
       }
     }
   });

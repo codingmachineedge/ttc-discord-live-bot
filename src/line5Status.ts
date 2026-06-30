@@ -52,7 +52,7 @@ function line5Alerts(alerts: AlertSummary[]): AlertSummary[] {
 // TTC's GTFS alert headerText is hard-truncated to 32 chars (verified against the
 // live feed), so it often cuts mid-word ("Elevator 3 out of se"). When the header
 // looks truncated, fall back to the first complete clause of the (longer) description.
-function cleanAlertTitle(alert: AlertSummary): string {
+export function cleanAlertTitle(alert: AlertSummary): string {
   const header = alert.header.trim();
   const looksTruncated = header.length >= 30 && !/[.!?)\]]$/.test(header);
   if (!looksTruncated || !alert.description) {

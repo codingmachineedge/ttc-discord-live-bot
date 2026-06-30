@@ -4,9 +4,20 @@ import sharp from "sharp";
 import type { AlertSummary, TripStopSummary, VehicleSummary } from "./types.js";
 import { getAlerts, getLine5Departures, getLine5Stations, getLiveDeparturesNearStop, getLiveVehiclesNearStop, getTripStops, type LiveDepartureSummary, type NearbyVehicleSummary } from "./ttcClient.js";
 import { makeTripFollowerAttachments } from "./tripFollower.js";
+import { cleanAlertTitle } from "./line5Status.js";
 import type { TripFollowSession } from "./settingsStore.js";
 
 const { applyPalette, GIFEncoder, quantize } = gifenc;
+
+// Line 5 realtime predictions carry no vehicle id — the fallback source manufactures
+// synthetic "eta-N" ids. Never surface those as a real car/vehicle number.
+function realVehicleNumber(vehicle: VehicleSummary | undefined): string | undefined {
+  const candidate = vehicle?.vehicleLabel ?? vehicle?.vehicleId;
+  if (!candidate || /^eta-/i.test(candidate)) {
+    return undefined;
+  }
+  return candidate;
+}
 
 type TripOption = {
   key: "birchmount-17a" | "golden-mile-68b" | "kennedy-go-viva";
@@ -57,7 +68,8 @@ const options: TripOption[] = [
     transferHeadsignPattern: /\b17A\b.*Highway 7/i,
     transferBranchStopPattern: /Highway 7|Rougeside|Uptown|Enterprise|Verdale/i,
     transferDirection: "northbound",
-    notes: ["TTC-only option ranked with live route 17 GTFS-Realtime departures when available."]
+    scheduledTransferWaitMinutes: 9,
+    notes: ["TTC-only option. Live route 17 vehicles are shown when one is near the transfer stop; otherwise the wait is a scheduled-headway estimate (TTC's realtime feed does not expose Line-5-style branch arrivals for surface buses)."]
   },
   {
     key: "golden-mile-68b",
@@ -70,7 +82,8 @@ const options: TripOption[] = [
     transferHeadsignPattern: /\b68B\b.*Major Mackenzie/i,
     transferBranchStopPattern: /Major Mackenzie|Angus Glen|Cachet|16th Ave/i,
     transferDirection: "northbound",
-    notes: ["TTC-only backup ranked with live route 68 GTFS-Realtime departures when available."]
+    scheduledTransferWaitMinutes: 8,
+    notes: ["TTC-only backup. Live route 68 vehicles are shown when one is near the transfer stop; otherwise the wait is a scheduled-headway estimate (TTC's realtime feed does not expose Line-5-style branch arrivals for surface buses)."]
   },
   {
     key: "kennedy-go-viva",
@@ -182,12 +195,27 @@ async function liveTransferVehicles(option: TripOption): Promise<NearbyVehicleSu
   if (!option.transferRouteShortName || !option.transferAnchorStopPattern) {
     return [];
   }
-  return getLiveVehiclesNearStop({
+  // First try the precise branch match. The TTC realtime feed reuses tripIds/stopIds
+  // that don't exist in the static GTFS, so realtime trips have no static headsign and
+  // branch matching almost always yields nothing. Fall back to a route-level proximity
+  // match (any route-68/17 bus heading the right way near the transfer stop) so a real
+  // nearby vehicle is still surfaced instead of a guaranteed "no data".
+  const branchMatch = await getLiveVehiclesNearStop({
     routeShortName: option.transferRouteShortName,
     anchorStopPattern: option.transferAnchorStopPattern,
     headsignPattern: option.transferHeadsignPattern,
     branchStopPattern: option.transferBranchStopPattern,
     direction: option.transferDirection,
+    limit: 3
+  });
+  if (branchMatch.length) {
+    return branchMatch;
+  }
+  return getLiveVehiclesNearStop({
+    routeShortName: option.transferRouteShortName,
+    anchorStopPattern: option.transferAnchorStopPattern,
+    direction: option.transferDirection,
+    radiusMeters: 1200,
     limit: 3
   });
 }
@@ -196,18 +224,22 @@ function recommendationGifSvg(best: EvaluatedTripOption, evaluated: EvaluatedTri
   const width = 1200;
   const height = 700;
   const pulse = frame % 2 === 0;
-  const line5Vehicle = vehicleName ? `Line 5 vehicle ${vehicleName}` : "No live Line 5 vehicle in feed";
+  // A Line 5 boarding exists whenever there's a live ETA (boardWait), independent of
+  // whether the feed provides a car number (it usually doesn't for Line 5).
+  const line5Vehicle = vehicleName
+    ? `Line 5 vehicle ${vehicleName}`
+    : boardWait !== undefined ? "Line 5 train (live ETA, no car number)" : "No live Line 5 vehicle in feed";
   const transferVehicle = best.liveTransferVehicles[0]
-    ? `${best.option.transferRouteShortName} vehicle ${best.liveTransferVehicles[0].vehicleLabel}`
-    : best.option.transferRouteShortName ? `No live ${best.option.transferRouteShortName} branch vehicle matched` : "GO/Viva realtime not configured";
+    ? `Route ${best.option.transferRouteShortName} bus ${best.liveTransferVehicles[0].vehicleLabel}`
+    : best.option.transferRouteShortName ? `No live route ${best.option.transferRouteShortName} bus nearby` : "GO/Viva realtime not configured";
   const etaLine = boardWait === undefined ? "Boarding ETA unavailable" : `Board Line 5 in ${boardWait} min`;
   const transferLine = best.transferWaitMinutes === undefined
     ? `Transfer wait unavailable (${best.transferWaitSource})`
     : `Transfer wait ${best.transferWaitMinutes} min (${best.transferWaitSource})`;
-  const tickerText = `Use only branch ${best.option.transferRouteShortName ?? "GO/Viva"} when shown. ${line5Vehicle}. ${transferVehicle}.`;
+  const tickerText = `Take route ${best.option.transferRouteShortName ?? "GO/Viva"} from ${best.option.line5Destination}. ${line5Vehicle}. ${transferVehicle}.`;
   const tickerX = 1140 - frame * 42;
   const optionRows = evaluated.slice(0, 3).map((item, index) => {
-    const y = 420 + index * 70;
+    const y = 436 + index * 70;
     const selected = item.option.key === best.option.key;
     const branch = item.option.transferRouteShortName ?? "GO/Viva";
     const vehicle = item.liveTransferVehicles[0]?.vehicleLabel ?? "n/a";
@@ -228,14 +260,14 @@ function recommendationGifSvg(best: EvaluatedTripOption, evaluated: EvaluatedTri
     <rect x="34" y="30" width="1132" height="640" rx="28" fill="#0f172a" stroke="${pulse ? "#facc15" : "#64748b"}" stroke-width="8"/>
     <text x="64" y="92" font-size="28" font-weight="900" fill="#facc15">RECOMMENDED EASTBOUND TRIP</text>
     ${titleLines.map((line, index) => `<text x="64" y="${150 + index * 48}" font-size="42" font-weight="900" fill="#ffffff">${escapeXml(line)}</text>`).join("\n")}
-    <rect x="64" y="245" width="500" height="94" rx="18" fill="${vehicleName ? "#064e3b" : "#7f1d1d"}"/>
+    <rect x="64" y="245" width="500" height="94" rx="18" fill="${boardWait !== undefined ? "#064e3b" : "#7f1d1d"}"/>
     <text x="92" y="286" font-size="24" font-weight="900" fill="#ffffff">LINE 5 BOARDING</text>
     <text x="92" y="320" font-size="26" font-weight="900" fill="#f8fafc">${escapeXml(etaLine)}</text>
-    <text x="540" y="320" font-size="22" font-weight="900" fill="#cbd5e1" text-anchor="end">${escapeXml(vehicleName ?? "vehicle n/a")}</text>
+    <text x="540" y="320" font-size="22" font-weight="900" fill="#cbd5e1" text-anchor="end">${escapeXml(vehicleName ? `car ${vehicleName}` : boardWait !== undefined ? "live ETA" : "n/a")}</text>
     <rect x="596" y="245" width="540" height="94" rx="18" fill="${best.liveTransferVehicles[0] ? "#064e3b" : "#78350f"}"/>
     <text x="624" y="286" font-size="24" font-weight="900" fill="#ffffff">TRANSFER VEHICLE</text>
     <text x="624" y="320" font-size="26" font-weight="900" fill="#f8fafc">${escapeXml(transferVehicle)}</text>
-    <text x="64" y="382" font-size="26" font-weight="900" fill="#e5e7eb">${escapeXml(transferLine)}</text>
+    <text x="64" y="372" font-size="24" font-weight="900" fill="#e5e7eb">${escapeXml(transferLine)}</text>
     ${optionRows}
     <rect x="64" y="626" width="1072" height="28" rx="10" fill="#111827"/>
     <text x="${tickerX}" y="647" font-size="19" font-weight="900" fill="#facc15">${escapeXml(tickerText)}</text>
@@ -295,7 +327,11 @@ function summarizeDisruptions(alerts: AlertSummary[]): DisruptionSummary {
       penalty += 15;
     }
     const returnText = expectedReturnText(alert);
-    return `- ${alert.header}${returnText ? ` (${returnText})` : " (return time not published)"}`;
+    // Use the truncation-aware title (TTC hard-caps headerText at 32 chars, so the raw
+    // header often cuts mid-word e.g. "Line 5 Eglinton: Delays between"). Only append a
+    // return time when one is actually published — the old "(return time not published)"
+    // filler read as broken text after a truncated header.
+    return `- ${cleanAlertTitle(alert)}${returnText ? ` (${returnText})` : ""}`;
   });
 
   return { blocked, penalty, lines };
@@ -331,13 +367,17 @@ export async function buildEglintonEastboundRecommendation(userId?: string): Pro
       liveTransfers: transferDepartures[index],
       liveTransferVehicles: transferVehicles[index],
       transferWaitMinutes,
-      transferWaitSource: liveTransfer ? `live TTC GTFS-Realtime ${transferBranchLabel(option)}` : option.key === "kennedy-go-viva" ? "GO/YRT realtime not configured" : `no branch-matched live TTC GTFS-Realtime ${transferBranchLabel(option)} departure`,
+      transferWaitSource: liveTransfer
+        ? `live TTC GTFS-Realtime route ${option.transferRouteShortName}`
+        : option.key === "kennedy-go-viva"
+          ? "GO/YRT realtime not configured"
+          : "scheduled-headway estimate",
       score: rankOption(option, boardWait, inVehicleMinutes, transferWaitMinutes) + disruptions.penalty
     };
   }).sort((a, b) => a.score - b.score);
 
   const best = evaluated[0];
-  const vehicleName = boardingVehicle?.vehicleLabel ?? boardingVehicle?.vehicleId;
+  const vehicleName = realVehicleNumber(boardingVehicle);
   const line5Eta = boardWait === undefined
     ? "No live Line 5 vehicle ETA is available from Eglinton right now."
     : `Board the next eastbound Line 5 vehicle in about **${boardWait} min**${vehicleName ? `: vehicle **${vehicleName}**` : ""}.`;
@@ -349,12 +389,15 @@ export async function buildEglintonEastboundRecommendation(userId?: string): Pro
     `Ride Line 5 to **${best.option.line5Destination}**${best.inVehicleMinutes !== undefined ? `, about **${best.inVehicleMinutes} min** on board` : ""}.`,
     `Transfer to **${best.option.transfer}**.`,
     `Expected transfer wait: **${displayMinutes(best.transferWaitMinutes)}** (${best.transferWaitSource}).`,
+    // One honest live-bus line. Prefer a live departure time, then a nearby live vehicle,
+    // then a single clear "no live bus" note (the old triple-negative was confusing).
     best.liveTransfers.length
-      ? `Next ${transferBranchLabel(best.option)} departure: **${best.liveTransfers[0].eta?.toLocaleTimeString("en-CA", { timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit" })}** at **${best.liveTransfers[0].stopName}**${best.liveTransfers[0].vehicleLabel ? `, vehicle **${best.liveTransfers[0].vehicleLabel}**` : ""}.`
-      : best.option.transferRouteShortName ? `No live ${transferBranchLabel(best.option)} departure matched the transfer stop right now.` : undefined,
-    best.liveTransferVehicles.length
-      ? `Bus vehicle to look for: **${transferBranchLabel(best.option)} vehicle ${best.liveTransferVehicles[0].vehicleLabel}**, about **${best.liveTransferVehicles[0].distanceMeters} m** from the transfer stop${best.liveTransferVehicles[0].bearing !== undefined ? `, bearing **${Math.round(best.liveTransferVehicles[0].bearing)} deg**` : ""}.`
-      : best.option.transferRouteShortName ? `No nearby live ${transferBranchLabel(best.option)} vehicle position matched the transfer stop right now.` : undefined,
+      ? `Live route ${best.option.transferRouteShortName} departure: **${best.liveTransfers[0].eta?.toLocaleTimeString("en-CA", { timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit" })}** at **${best.liveTransfers[0].stopName}**${best.liveTransfers[0].vehicleLabel ? `, vehicle **${best.liveTransfers[0].vehicleLabel}**` : ""}.`
+      : best.liveTransferVehicles.length
+        ? `Live route ${best.option.transferRouteShortName} bus nearby: vehicle **${best.liveTransferVehicles[0].vehicleLabel}**, about **${best.liveTransferVehicles[0].distanceMeters} m** from the transfer stop${best.liveTransferVehicles[0].bearing !== undefined ? `, heading **${Math.round(best.liveTransferVehicles[0].bearing)}°**` : ""}.`
+        : best.option.transferRouteShortName
+          ? `No live route ${best.option.transferRouteShortName} bus near the transfer stop right now — the wait above is the scheduled estimate. (TTC's realtime feed doesn't publish per-branch surface-bus arrivals the way it would for a Line-5-style station.)`
+          : undefined,
     disruptions.lines.length
       ? `\n**Service disruptions detected**\n${disruptions.lines.join("\n")}`
       : "\n**Service disruptions detected**\n- No matching Line 5 / transfer disruption found in the current TTC alert feed.",
