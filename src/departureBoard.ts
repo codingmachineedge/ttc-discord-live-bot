@@ -69,7 +69,16 @@ export async function makeDepartureBoardAttachment(session: DepartureBoardSessio
     const y = 220 + index * 72;
     const etaMinutes = formatEtaMinutes(vehicle.eta).toUpperCase();
     const etaTime = formatEtaTime(vehicle.eta);
-    const carLabel = vehicle.source === "schedule" ? "SCHEDULED" : `CAR ${vehicle.vehicleLabel ?? vehicle.vehicleId}`;
+    // Only show a car number when we actually have a real one. Line 5 predictions
+    // carry no vehicle id (the source gives ETAs only), so the bot manufactures
+    // synthetic "eta-N" ids — never render those as a "CAR" number.
+    const realCar = vehicle.vehicleLabel ?? vehicle.vehicleId;
+    const hasRealCar = !!realCar && !/^eta-/i.test(realCar);
+    const carLabel = vehicle.source === "schedule"
+      ? "SCHEDULED"
+      : vehicle.source === "transsee"
+        ? (hasRealCar ? `CAR ${realCar}` : "ESTIMATED")
+        : (hasRealCar ? `CAR ${realCar}` : "LIVE");
     const headsignRaw = vehicle.headsign ?? session.direction.toUpperCase();
     const headsign = headsignRaw.length > 22 ? `${headsignRaw.slice(0, 21).trimEnd()}…` : headsignRaw;
     return `
