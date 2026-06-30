@@ -654,6 +654,46 @@ export async function getLine5EglintonStopId(): Promise<{ stopId: string; stopNa
   return pick ? { stopId: pick.stopId, stopName: pick.stopName } : undefined;
 }
 
+// TTC Line 5 stations are split into per-direction platform stops (e.g. Eglinton
+// has "...Eastbound Platform" = 16073 and "...Westbound Platform" = 16074). The
+// TransSee predict page is keyed by stopId and only returns trains for THAT
+// platform's direction, so asking for westbound trains using the eastbound
+// platform's stopId yields zero realtime predictions (it silently fell back to
+// schedule). Resolve the sibling platform whose name matches the requested
+// direction. Terminus platforms (Kennedy / Mount Dennis) carry no direction word
+// in their name and only run one way, so the original stopId is returned and the
+// predict page still works.
+export async function resolveDirectionalLine5StopId(
+  stopId: string,
+  direction: "eastbound" | "westbound"
+): Promise<string> {
+  const staticGtfs = await getStaticGtfs();
+  const baseOf = (name: string) =>
+    name
+      .replace(/\s+(Eastbound|Westbound|East|West)\s+Platform$/i, "")
+      .replace(/\s+LRT\s+Platform$/i, "")
+      .replace(/\s+Platform$/i, "")
+      .replace(/\s+Station$/i, "")
+      .trim()
+      .toLowerCase();
+  const baseName = baseOf(staticGtfs.stops.get(stopId)?.name ?? stopId);
+  if (!baseName) {
+    return stopId;
+  }
+  const wantWest = direction === "westbound";
+  for (const stop of staticGtfs.stops.values()) {
+    if (baseOf(stop.name) !== baseName) {
+      continue;
+    }
+    const isWest = /\b(west|westbound)\b/i.test(stop.name);
+    const isEast = /\b(east|eastbound)\b/i.test(stop.name);
+    if ((wantWest && isWest) || (!wantWest && isEast)) {
+      return stop.id;
+    }
+  }
+  return stopId;
+}
+
 export async function getLine5Departures(stopId: string, direction: "eastbound" | "westbound"): Promise<VehicleSummary[]> {
   const [vehicles, tripFeed] = await Promise.all([
     getVehicleSummaries({ routeShortName: "5", trackedOnly: true }),
@@ -708,9 +748,22 @@ export async function getLine5Departures(stopId: string, direction: "eastbound" 
   // arrival API; if that is empty too (e.g. outside service hours), fall back to
   // the static schedule so riders always get an honest next-train answer.
   try {
-    const transsee = await getLine5FallbackDepartures(stopId, direction, await getLine5Stations());
+    const directionalStopId = await resolveDirectionalLine5StopId(stopId, direction);
+    const transsee = await getLine5FallbackDepartures(directionalStopId, direction, await getLine5Stations());
     if (transsee.length) {
-      return transsee;
+      // Display the station the caller asked about (the directional sibling stopId
+      // used to fetch predictions is an implementation detail). Prefer the raw
+      // static stop name so split-platform stations show their proper label.
+      const staticGtfs = await getStaticGtfs();
+      const displayName = staticGtfs.stops.get(stopId)?.name
+        ?.replace(/\s+(Eastbound|Westbound|East|West)\s+Platform$/i, " Station")
+        .replace(/\s+LRT\s+Platform$/i, " Station")
+        .replace(/\s+Station\s+Station$/i, " Station");
+      return transsee.map((vehicle) => ({
+        ...vehicle,
+        nextStopId: stopId,
+        nextStop: displayName ?? vehicle.nextStop
+      }));
     }
   } catch (error) {
     console.error("[line5] TransSee fallback failed, using schedule", error);
