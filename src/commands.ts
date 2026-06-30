@@ -69,6 +69,9 @@ export const commandDefinitions = [
         .setDescription("Pick a station and direction for a live departure board.")
     ),
   new SlashCommandBuilder()
+    .setName("ttc-line5-status")
+    .setDescription("Line 5 Eglinton status: alerts, next trains both ways, service hours, GO connections."),
+  new SlashCommandBuilder()
     .setName("ttc-recommend")
     .setDescription("Suggest a lower-wait trip for a known TTC travel pattern.")
     .addSubcommand((subcommand) =>

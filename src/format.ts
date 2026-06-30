@@ -125,24 +125,35 @@ function escapeXml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
-function wrapSvgText(value: string, maxChars: number, maxLines: number): string[] {
-  const words = value.replace(/\s+/g, " ").trim().split(" ");
+export function wrapSvgText(value: string, maxChars: number, maxLines: number): string[] {
+  const words = value.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
   const lines: string[] = [];
   let current = "";
-  for (const word of words) {
+  let index = 0;
+  for (; index < words.length; index++) {
+    const word = words[index];
     const next = current ? `${current} ${word}` : word;
     if (next.length > maxChars && current) {
       lines.push(current);
       current = word;
+      if (lines.length >= maxLines) {
+        current = "";
+        break;
+      }
     } else {
       current = next;
-    }
-    if (lines.length >= maxLines) {
-      break;
     }
   }
   if (current && lines.length < maxLines) {
     lines.push(current);
+    index = words.length;
+  }
+  // Don't silently drop overflow text: if words remain unplaced, mark the last
+  // line with an ellipsis so the truncation is visible rather than invisible.
+  if (index < words.length && lines.length) {
+    const last = lines[lines.length - 1];
+    const trimmed = last.length > maxChars - 1 ? `${last.slice(0, Math.max(0, maxChars - 1)).trimEnd()}…` : `${last}…`;
+    lines[lines.length - 1] = trimmed;
   }
   return lines;
 }

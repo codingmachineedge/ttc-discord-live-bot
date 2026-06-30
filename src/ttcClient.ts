@@ -585,6 +585,71 @@ export async function getLine5ScheduleDepartures(
     }));
 }
 
+export type Line5ServiceHours = {
+  firstTrain?: string;
+  lastTrain?: string;
+  stopCount: number;
+  inService: boolean;
+};
+
+// First/last train and service span for Line 5, computed from the static GTFS
+// stop_times for route 5. Treated as a daily-repeating schedule (matches how the
+// line actually runs). "inService" reflects whether the current Toronto time falls
+// within the first->last window.
+export async function getLine5ServiceHours(): Promise<Line5ServiceHours> {
+  const staticGtfs = await getStaticGtfs();
+  const route = staticGtfs.routesByShortName.get("5");
+  if (!route) {
+    return { stopCount: 0, inService: false };
+  }
+  let earliest = Infinity;
+  let latest = -Infinity;
+  for (const trip of staticGtfs.trips.values()) {
+    if (trip.routeId !== route.id) {
+      continue;
+    }
+    for (const stopTime of staticGtfs.stopTimesByTrip.get(trip.id) ?? []) {
+      const seconds = parseGtfsTimeToSeconds(stopTime.departureTime || stopTime.arrivalTime);
+      if (seconds === undefined) {
+        continue;
+      }
+      earliest = Math.min(earliest, seconds);
+      latest = Math.max(latest, seconds);
+    }
+  }
+  const stations = await getLine5Stations();
+  if (!Number.isFinite(earliest) || !Number.isFinite(latest)) {
+    return { stopCount: stations.length, inService: false };
+  }
+  const nowSeconds = torontoSecondsOfDay();
+  // GTFS times can roll past 24:00 (e.g. 25:30 = 01:30 next day). Compare against a
+  // normalized window: a train is "in service" if now is between the first train and
+  // last train, accounting for post-midnight wrap.
+  const inService = latest >= 86400
+    ? nowSeconds >= earliest || nowSeconds <= (latest - 86400)
+    : nowSeconds >= earliest && nowSeconds <= latest;
+  return {
+    firstTrain: formatGtfsClock(earliest),
+    lastTrain: formatGtfsClock(latest),
+    stopCount: stations.length,
+    inService
+  };
+}
+
+// Resolve the central Eglinton (Yonge) interchange Line 5 stopId, preferring the
+// plain "Eglinton" station over "Eglinton West"/"Cedarvale". Used by /ttc-line5-status
+// as the reference point for next-train data. The schedule fallback resolves sibling
+// platform stopIds per direction, so either platform's stopId works for both directions.
+export async function getLine5EglintonStopId(): Promise<{ stopId: string; stopName: string } | undefined> {
+  const stations = await getLine5Stations();
+  const eglinton = stations.filter((station) => /eglinton/i.test(station.stopName) && !/west/i.test(station.stopName));
+  const pick = eglinton.find((station) => /^eglinton(\s+station)?\b/i.test(station.stopName.trim()))
+    ?? eglinton[0]
+    ?? stations.find((station) => /eglinton/i.test(station.stopName))
+    ?? stations[Math.floor(stations.length / 2)];
+  return pick ? { stopId: pick.stopId, stopName: pick.stopName } : undefined;
+}
+
 export async function getLine5Departures(stopId: string, direction: "eastbound" | "westbound"): Promise<VehicleSummary[]> {
   const [vehicles, tripFeed] = await Promise.all([
     getVehicleSummaries({ routeShortName: "5", trackedOnly: true }),

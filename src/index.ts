@@ -31,6 +31,7 @@ import {
   upsertTripFollower
 } from "./settingsStore.js";
 import { buildTripAnnouncement, makeTripFollowerAttachments, upcomingStopOptions } from "./tripFollower.js";
+import { formatLine5StatusText, getLine5StatusData, makeLine5StatusAttachment } from "./line5Status.js";
 import { buildEglintonEastboundRecommendation, isEglintonEastboundRecommendationRequest } from "./tripRecommendation.js";
 import { findVehicleByNumber, getAlerts, getLine5Departures, getLine5Stations, getStaticGtfs, getTripStops, getVehicles } from "./ttcClient.js";
 import { filterAlertsAgainstTtcWebsite, formatTtcWebsiteStatuses, getTtcWebsiteRouteStatuses } from "./ttcWebsite.js";
@@ -278,6 +279,20 @@ async function handleCommand(interaction: any): Promise<void> {
         content: "Choose the Line 5 station for the departure board.",
         components: [new ActionRowBuilder<any>().addComponents(stationMenu)]
       });
+      return;
+    }
+
+    if (interaction.commandName === "ttc-line5-status") {
+      await interaction.deferReply();
+      const data = await getLine5StatusData();
+      const chunks = chunksFromText(formatLine5StatusText(data));
+      await interaction.editReply({
+        content: chunks[0],
+        files: [await makeLine5StatusAttachment(data)]
+      });
+      for (const chunk of chunks.slice(1)) {
+        await interaction.followUp(chunk);
+      }
       return;
     }
 
