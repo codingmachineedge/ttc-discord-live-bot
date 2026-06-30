@@ -1,0 +1,54 @@
+name: Deploy to docker host
+
+# Pulls secrets (incl. METROLINX_API_KEY) from GitHub and deploys the bot to the
+# docker host. The host (docker@192.168.50.242) is on a private LAN, so this MUST
+# run on a self-hosted runner that can reach it AND has the "bambu-remote" docker
+# context configured. GitHub-hosted runners cannot reach the LAN.
+#
+# Trigger it manually ("Run workflow") once the host is back online, or on push to
+# main. Secrets are write-only in GitHub: their values exist only inside this run.
+#
+# Required repo secrets: METROLINX_API_KEY, DISCORD_TOKEN, DISCORD_CLIENT_ID.
+# Optional: DISCORD_GUILD_ID, ALERT_CHANNEL_ID, GENERAL_CHANNEL_ID.
+
+on:
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-docker-host
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Write .env from secrets (ephemeral, never committed)
+        shell: bash
+        run: |
+          umask 077
+          cat > .env <<EOF
+          DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}
+          DISCORD_CLIENT_ID=${{ secrets.DISCORD_CLIENT_ID }}
+          DISCORD_GUILD_ID=${{ secrets.DISCORD_GUILD_ID }}
+          ALERT_CHANNEL_ID=${{ secrets.ALERT_CHANNEL_ID }}
+          GENERAL_CHANNEL_ID=${{ secrets.GENERAL_CHANNEL_ID }}
+          AUTO_SETUP_CHANNELS=true
+          METROLINX_API_KEY=${{ secrets.METROLINX_API_KEY }}
+          EOF
+          echo "Wrote .env with $(grep -c '=' .env) keys (values masked)."
+
+      - name: Deploy via bambu-remote docker context
+        shell: bash
+        run: |
+          docker --context bambu-remote compose -f docker-compose.yml up -d --build
+          docker --context bambu-remote compose -f docker-compose.yml ps
+
+      - name: Scrub local .env
+        if: always()
+        shell: bash
+        run: rm -f .env
