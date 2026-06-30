@@ -26,6 +26,14 @@ function formatEtaMinutes(eta: Date | undefined): string {
   return minutes <= 1 ? `${minutes} min` : `${minutes} mins`;
 }
 
+function sourceLabel(vehicles: VehicleSummary[]): string {
+  const source = vehicles[0]?.source;
+  if (source === "gtfs-realtime") return "LIVE DEPARTURES";
+  if (source === "transsee") return "LIVE DEPARTURES (estimated)";
+  if (source === "schedule") return "SCHEDULED DEPARTURES";
+  return "REAL TIME DEPARTURES";
+}
+
 export function formatDepartureBoardText(session: DepartureBoardSession, vehicles: VehicleSummary[]): string {
   const lines = [
     `# Line 5 Eglinton Departures`,
@@ -35,10 +43,12 @@ export function formatDepartureBoardText(session: DepartureBoardSession, vehicle
   ];
 
   if (!vehicles.length) {
-    lines.push("No live Line 5 departures found in the TTC realtime vehicle feed for this station/direction.");
+    lines.push("No Line 5 departures available for this station/direction right now.");
   } else {
+    lines[2] = `Source: ${sourceLabel(vehicles)}   Updated: ${new Date().toLocaleTimeString("en-CA", { timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false })}`;
     for (const vehicle of vehicles) {
-      lines.push(`**${vehicle.headsign ?? session.direction}** - vehicle ${vehicle.vehicleLabel ?? vehicle.vehicleId} - ${formatEtaMinutes(vehicle.eta)} - ${formatEtaTime(vehicle.eta)} - ${formatDelay(vehicle.delaySeconds)}`);
+      const car = vehicle.source === "schedule" ? "scheduled" : `vehicle ${vehicle.vehicleLabel ?? vehicle.vehicleId}`;
+      lines.push(`**${vehicle.headsign ?? session.direction}** - ${car} - ${formatEtaMinutes(vehicle.eta)} - ${formatEtaTime(vehicle.eta)} - ${formatDelay(vehicle.delaySeconds)}`);
     }
   }
 
@@ -54,15 +64,16 @@ export async function makeDepartureBoardAttachment(session: DepartureBoardSessio
     const y = 220 + index * 72;
     const etaMinutes = formatEtaMinutes(vehicle.eta).toUpperCase();
     const etaTime = formatEtaTime(vehicle.eta);
+    const carLabel = vehicle.source === "schedule" ? "SCHEDULED" : `CAR ${vehicle.vehicleLabel ?? vehicle.vehicleId}`;
     return `
       <rect x="54" y="${y - 42}" width="992" height="58" rx="12" fill="${index % 2 === 0 ? "#111827" : "#1f2937"}"/>
       <text x="86" y="${y}" font-size="34" font-weight="800" fill="#facc15">${escapeXml(vehicle.headsign ?? session.direction.toUpperCase())}</text>
-      <text x="610" y="${y}" font-size="24" font-weight="800" fill="#cbd5e1" text-anchor="middle">CAR ${escapeXml(vehicle.vehicleLabel ?? vehicle.vehicleId)}</text>
+      <text x="610" y="${y}" font-size="24" font-weight="800" fill="#cbd5e1" text-anchor="middle">${escapeXml(carLabel)}</text>
       <text x="820" y="${y}" font-size="34" font-weight="900" fill="#ffffff" text-anchor="end">${escapeXml(etaMinutes)}</text>
       <text x="1010" y="${y}" font-size="34" font-weight="900" fill="#ffffff" text-anchor="end">${escapeXml(etaTime)}</text>`;
   }).join("\n") : `
-      <text x="550" y="335" font-size="34" font-weight="800" fill="#ffffff" text-anchor="middle">NO LIVE DEPARTURES IN FEED</text>
-      <text x="550" y="385" font-size="24" fill="#cbd5e1" text-anchor="middle">Waiting for TTC realtime Line 5 data</text>`;
+      <text x="550" y="335" font-size="34" font-weight="800" fill="#ffffff" text-anchor="middle">NO DEPARTURES AVAILABLE</text>
+      <text x="550" y="385" font-size="24" fill="#cbd5e1" text-anchor="middle">Line 5 service data is unavailable right now</text>`;
 
   const svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
@@ -71,7 +82,7 @@ export async function makeDepartureBoardAttachment(session: DepartureBoardSessio
   <rect x="36" y="34" width="1028" height="552" rx="28" fill="#0f172a" stroke="#facc15" stroke-width="8"/>
   <text x="550" y="105" font-size="62" font-weight="900" fill="#facc15" text-anchor="middle">LINE 5 EGLINTON</text>
   <text x="550" y="158" font-size="38" font-weight="800" fill="#ffffff" text-anchor="middle">${escapeXml(session.stationName)} - ${session.direction.toUpperCase()}</text>
-  <text x="550" y="198" font-size="22" fill="#94a3b8" text-anchor="middle">REAL TIME DEPARTURES</text>
+  <text x="550" y="198" font-size="22" fill="#94a3b8" text-anchor="middle">${escapeXml(sourceLabel(vehicles))}</text>
   ${rowSvg}
   <text x="550" y="555" font-size="22" fill="#94a3b8" text-anchor="middle">Updated ${escapeXml(new Date().toLocaleTimeString("en-CA", { timeZone: "America/Toronto", hour12: false }))}</text>
   </g>

@@ -58,6 +58,9 @@ export type VehicleSummary = {
   currentStopSequence?: number;
   nextStopId?: string;
   routeShortName?: string;
+  // Where this summary came from, so the UI can label live vs. estimated vs. scheduled.
+  source?: "gtfs-realtime" | "transsee" | "schedule";
+  waitMinutes?: number;
 };
 
 export type TripStopSummary = {

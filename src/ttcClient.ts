@@ -1,7 +1,7 @@
 import GtfsRealtimeBindings from "gtfs-realtime-bindings";
 import NodeCache from "node-cache";
 import { config, trackedRouteShortNames } from "./config.js";
-import { getLine5FallbackDepartures, getLine5FallbackVehicles } from "./line5Realtime.js";
+import { getLine5FallbackDepartures, getLine5FallbackVehicles, line5DirectionMatches } from "./line5Realtime.js";
 import { loadStaticGtfs } from "./staticGtfs.js";
 import type { AlertSummary, StaticGtfs, StopTimeInfo, TripStopSummary, VehicleSummary } from "./types.js";
 
@@ -164,7 +164,23 @@ async function getVehicleSummaries(options: { routeShortName?: string; trackedOn
 export async function getVehicles(routeShortName?: string): Promise<VehicleSummary[]> {
   const vehicles = await getVehicleSummaries({ routeShortName, trackedOnly: !routeShortName });
   if (routeShortName === "5" && !vehicles.length) {
-    return getLine5FallbackVehicles(await getLine5Stations());
+    const stations = await getLine5Stations();
+    const transsee = await getLine5FallbackVehicles(stations).catch(() => []);
+    if (transsee.length) {
+      return transsee;
+    }
+    // Honest degradation: no live Line 5 vehicles -> show next scheduled trains in
+    // both directions from the central Eglinton interchange so the command is useful.
+    const hub = stations.find((station) => /eglinton/i.test(station.stopName))
+      ?? stations[Math.floor(stations.length / 2)];
+    if (hub) {
+      const [eastbound, westbound] = await Promise.all([
+        getLine5ScheduleDepartures(hub.stopId, "eastbound", 3),
+        getLine5ScheduleDepartures(hub.stopId, "westbound", 3)
+      ]);
+      return [...eastbound, ...westbound]
+        .sort((a, b) => (a.eta?.getTime() ?? Infinity) - (b.eta?.getTime() ?? Infinity));
+    }
   }
   return vehicles;
 }
@@ -443,8 +459,130 @@ export async function getLine5Stations(): Promise<TripStopSummary[]> {
       }
       seen.add(stop.stopId);
       return true;
+    });
+  // NOTE: full station list is returned intentionally. The 25-option cap for
+  // Discord StringSelectMenu is applied at the call site (index.ts), not here,
+  // so the non-menu consumers (fallback name resolution, trip recommendations,
+  // schedule departures, route map) get the complete route.
+}
+
+// --- Schedule-grounded Line 5 departures (static GTFS) --------------------
+// There is no official realtime feed for Line 5 (verified). This computes the
+// next scheduled trains from the static GTFS, so the bot ALWAYS has honest
+// departure data - including "first train at HH:MM" when service is not running
+// (e.g. overnight). Treated as a daily-repeating schedule, which matches how
+// Line 5 actually runs.
+
+function torontoSecondsOfDay(now: Date = new Date()): number {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Toronto", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+  }).formatToParts(now);
+  const get = (type: string) => Number(parts.find((part) => part.type === type)?.value ?? "0");
+  const hour = get("hour") % 24;
+  return hour * 3600 + get("minute") * 60 + get("second");
+}
+
+function parseGtfsTimeToSeconds(value: string | undefined): number | undefined {
+  const match = value?.trim().match(/^(\d{1,2}):(\d{2}):(\d{2})$/);
+  if (!match) {
+    return undefined;
+  }
+  return Number(match[1]) * 3600 + Number(match[2]) * 60 + Number(match[3]);
+}
+
+function formatGtfsClock(totalSeconds: number): string {
+  const normalized = ((totalSeconds % 86400) + 86400) % 86400;
+  const hours = Math.floor(normalized / 3600);
+  const minutes = Math.floor((normalized % 3600) / 60);
+  return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
+}
+
+export async function getLine5ScheduleDepartures(
+  stopId: string,
+  direction: "eastbound" | "westbound",
+  limit = 6
+): Promise<VehicleSummary[]> {
+  const staticGtfs = await getStaticGtfs();
+  const route = staticGtfs.routesByShortName.get("5");
+  if (!route) {
+    return [];
+  }
+  const stationName = staticGtfs.stops.get(stopId)?.name ?? stopId;
+  const nowSeconds = torontoSecondsOfDay();
+
+  // TTC Line 5 stops are per-platform (e.g. "Eglinton Station Eastbound Platform"),
+  // so a westbound train never stops at the eastbound platform's stopId. Resolve
+  // all sibling platform stopIds for this station so the requested direction works
+  // regardless of which platform the caller passed.
+  const baseName = (staticGtfs.stops.get(stopId)?.name ?? stopId)
+    .replace(/\s+(Eastbound|Westbound|East|West)\s+Platform$/i, "")
+    .replace(/\s+LRT\s+Platform$/i, "")
+    .replace(/\s+Platform$/i, "")
+    .replace(/\s+Station$/i, "")
+    .trim()
+    .toLowerCase();
+  const siblingStopIds = new Set<string>([stopId]);
+  for (const stop of staticGtfs.stops.values()) {
+    const normalized = stop.name
+      .replace(/\s+(Eastbound|Westbound|East|West)\s+Platform$/i, "")
+      .replace(/\s+LRT\s+Platform$/i, "")
+      .replace(/\s+Platform$/i, "")
+      .replace(/\s+Station$/i, "")
+      .trim()
+      .toLowerCase();
+    if (normalized && normalized === baseName) {
+      siblingStopIds.add(stop.id);
+    }
+  }
+
+  const seenTimes = new Set<number>();
+  const candidates: { timeSeconds: number; headsign?: string; tripId: string }[] = [];
+  for (const trip of staticGtfs.trips.values()) {
+    if (trip.routeId !== route.id) {
+      continue;
+    }
+    if (!line5DirectionMatches(trip.headsign, direction)) {
+      continue;
+    }
+    const stopTime = (staticGtfs.stopTimesByTrip.get(trip.id) ?? []).find((item) => siblingStopIds.has(item.stopId));
+    const seconds = parseGtfsTimeToSeconds(stopTime?.departureTime || stopTime?.arrivalTime);
+    if (seconds === undefined || seenTimes.has(seconds)) {
+      continue;
+    }
+    seenTimes.add(seconds);
+    candidates.push({ timeSeconds: seconds, headsign: trip.headsign, tripId: trip.id });
+  }
+  if (!candidates.length) {
+    return [];
+  }
+
+  const now = Date.now();
+  return candidates
+    .map((candidate) => {
+      const timeOfDay = ((candidate.timeSeconds % 86400) + 86400) % 86400;
+      let waitSeconds = timeOfDay - nowSeconds;
+      if (waitSeconds < -60) {
+        waitSeconds += 86400; // next service day
+      }
+      return { ...candidate, timeOfDay, waitSeconds };
     })
-    .slice(0, 25);
+    .sort((a, b) => a.waitSeconds - b.waitSeconds)
+    .slice(0, limit)
+    .map((candidate) => ({
+      vehicleId: "scheduled",
+      vehicleLabel: undefined,
+      routeId: "5",
+      routeName: "5 Line 5 Eglinton",
+      routeShortName: "5",
+      headsign: candidate.headsign ?? (direction === "eastbound" ? "Kennedy" : "Mount Dennis"),
+      nextStopId: stopId,
+      nextStop: stationName,
+      scheduledTime: formatGtfsClock(candidate.timeOfDay),
+      eta: new Date(now + candidate.waitSeconds * 1000),
+      waitMinutes: Math.max(0, Math.round(candidate.waitSeconds / 60)),
+      currentStatus: "SCHEDULED",
+      source: "schedule" as const
+    }));
 }
 
 export async function getLine5Departures(stopId: string, direction: "eastbound" | "westbound"): Promise<VehicleSummary[]> {
@@ -471,11 +609,7 @@ export async function getLine5Departures(stopId: string, direction: "eastbound" 
     if (!target) {
       continue;
     }
-    const headsign = vehicle.headsign?.toLowerCase() ?? "";
-    const directionMatches = direction === "eastbound"
-      ? /east|kennedy/.test(headsign)
-      : /west|mount dennis/.test(headsign);
-    if (!directionMatches && headsign) {
+    if (!line5DirectionMatches(vehicle.headsign, direction)) {
       continue;
     }
     const current = vehicle.currentStopSequence ?? 0;
@@ -493,11 +627,26 @@ export async function getLine5Departures(stopId: string, direction: "eastbound" 
       });
     }
   }
-  const realtimeMatches = matches.sort((a, b) => (a.eta?.getTime() ?? Infinity) - (b.eta?.getTime() ?? Infinity)).slice(0, 6);
-  if (!realtimeMatches.length) {
-    return getLine5FallbackDepartures(stopId, direction, await getLine5Stations());
+  const realtimeMatches = matches
+    .map((vehicle) => ({ ...vehicle, source: vehicle.source ?? ("gtfs-realtime" as const) }))
+    .sort((a, b) => (a.eta?.getTime() ?? Infinity) - (b.eta?.getTime() ?? Infinity))
+    .slice(0, 6);
+  if (realtimeMatches.length) {
+    return realtimeMatches;
   }
-  return realtimeMatches;
+
+  // No official realtime for Line 5. Try the TransSee proxy of the hidden TTC
+  // arrival API; if that is empty too (e.g. outside service hours), fall back to
+  // the static schedule so riders always get an honest next-train answer.
+  try {
+    const transsee = await getLine5FallbackDepartures(stopId, direction, await getLine5Stations());
+    if (transsee.length) {
+      return transsee;
+    }
+  } catch (error) {
+    console.error("[line5] TransSee fallback failed, using schedule", error);
+  }
+  return getLine5ScheduleDepartures(stopId, direction);
 }
 
 export async function getAlerts(): Promise<AlertSummary[]> {

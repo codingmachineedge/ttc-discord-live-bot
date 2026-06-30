@@ -278,6 +278,7 @@ async function handleCommand(interaction: any): Promise<void> {
         content: "Choose the Line 5 station for the departure board.",
         components: [new ActionRowBuilder<any>().addComponents(stationMenu)]
       });
+      return;
     }
 
     if (interaction.commandName === "ttc-recommend") {
