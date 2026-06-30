@@ -312,8 +312,8 @@ export async function makeAlertAttachment(alert: AlertSummary): Promise<Attachme
     `<text x="64" y="318" font-size="24" font-weight="900" fill="${theme.accent}">${escapeXml(theme.eyebrow)}</text>`,
     ...scopeLines.map((line, index) => `<text x="64" y="${368 + index * 38}" font-size="34" font-weight="900" fill="#ffffff">${escapeXml(line)}</text>`),
     meta ? `<text x="64" y="465" font-size="24" font-weight="800" fill="#fde68a">${escapeXml(meta)}</text>` : undefined,
-    ...descriptionLines.map((line, index) => `<text x="64" y="${520 + index * 29}" font-size="24" fill="#e5e7eb">${escapeXml(line)}</text>`),
-    `<text x="64" y="706" font-size="20" fill="#cbd5e1">${escapeXml(active)}</text>`,
+    ...descriptionLines.map((line, index) => `<text x="64" y="${520 + index * 31}" font-size="26" fill="#f1f5f9">${escapeXml(line)}</text>`),
+    `<text x="64" y="708" font-size="22" fill="#e2e8f0">${escapeXml(active)}</text>`,
     `<line x1="48" y1="744" x2="1152" y2="744" stroke="#ffffff" stroke-opacity="0.65" stroke-width="4"/>`
   ].filter(Boolean).join("\n");
 

@@ -133,7 +133,14 @@ function tripMapSvg(session: TripFollowSession, vehicle: VehicleSummary, stops: 
   const routeText = escapeXml(session.routeName);
   const statusText = escapeXml(formatVehicleStatus(vehicle.currentStatus));
   const scrollText = escapeXml(line5TickerText(session, vehicle));
-  const scrollX = 1180 - frame * 34;
+  // Marquee that traverses the FULL (often long, bilingual) ticker string across the
+  // 10 GIF frames, then clipped to the ticker bar so it can never spill over other
+  // content. Estimate text width from char count at ~10.5px/char (font-size 20 bold).
+  const tickerBarLeft = 32;
+  const tickerBarWidth = width - 64;
+  const estTextWidth = scrollText.length * 10.5;
+  const tickerTravel = estTextWidth + tickerBarWidth;
+  const scrollX = tickerBarLeft + tickerBarWidth - (frame / 9) * tickerTravel;
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
@@ -147,8 +154,9 @@ function tripMapSvg(session: TripFollowSession, vehicle: VehicleSummary, stops: 
   ${stopNodes}
   <text x="64" y="360" font-size="28" font-weight="900" fill="#0f172a">Next: ${nextStopText}</text>
   <text x="${width - 64}" y="360" font-size="28" font-weight="900" fill="#991b1b" text-anchor="end">Get off: ${destinationText}</text>
-  <rect x="32" y="370" width="${width - 64}" height="30" rx="10" fill="#111827"/>
-  <text x="${scrollX}" y="392" font-size="20" font-weight="900" fill="#facc15">${scrollText}</text>
+  <defs><clipPath id="tickerClip"><rect x="${tickerBarLeft}" y="370" width="${tickerBarWidth}" height="30" rx="10"/></clipPath></defs>
+  <rect x="${tickerBarLeft}" y="370" width="${tickerBarWidth}" height="30" rx="10" fill="#111827"/>
+  <g clip-path="url(#tickerClip)"><text x="${scrollX}" y="392" font-size="20" font-weight="900" fill="#facc15">${scrollText}</text></g>
   </g>
 </svg>`;
 }

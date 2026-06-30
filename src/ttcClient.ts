@@ -622,11 +622,15 @@ export async function getLine5ServiceHours(): Promise<Line5ServiceHours> {
     return { stopCount: stations.length, inService: false };
   }
   const nowSeconds = torontoSecondsOfDay();
-  // GTFS times can roll past 24:00 (e.g. 25:30 = 01:30 next day). Compare against a
-  // normalized window: a train is "in service" if now is between the first train and
-  // last train, accounting for post-midnight wrap.
-  const inService = latest >= 86400
-    ? nowSeconds >= earliest || nowSeconds <= (latest - 86400)
+  // The Line 5 service window crosses midnight (first train ~05:40, last train ~02:09).
+  // GTFS may encode the post-midnight end either as a >=24h value (26:09 = 94140) OR
+  // as a small wall-clock value (02:09 = 7740) that ends up numerically BEFORE the
+  // first train. Both cases mean the same wrapping window, so detect the wrap by
+  // either signal and normalise the end to a 0-86400 value before comparing.
+  const wrapsMidnight = latest >= 86400 || latest < earliest;
+  const normalizedLatest = latest >= 86400 ? latest - 86400 : latest;
+  const inService = wrapsMidnight
+    ? nowSeconds >= earliest || nowSeconds <= normalizedLatest
     : nowSeconds >= earliest && nowSeconds <= latest;
   return {
     firstTrain: formatGtfsClock(earliest),
