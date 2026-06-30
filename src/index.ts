@@ -32,6 +32,7 @@ import {
 } from "./settingsStore.js";
 import { buildTripAnnouncement, makeTripFollowerAttachments, upcomingStopOptions } from "./tripFollower.js";
 import { formatLine5StatusText, getLine5StatusData, makeLine5StatusAttachment } from "./line5Status.js";
+import { makeLine5RouteMapAttachment } from "./line5Map.js";
 import { buildEglintonEastboundRecommendation, isEglintonEastboundRecommendationRequest } from "./tripRecommendation.js";
 import { findVehicleByNumber, getAlerts, getLine5Departures, getLine5Stations, getStaticGtfs, getTripStops, getVehicles } from "./ttcClient.js";
 import { filterAlertsAgainstTtcWebsite, formatTtcWebsiteStatuses, getTtcWebsiteRouteStatuses } from "./ttcWebsite.js";
@@ -293,6 +294,19 @@ async function handleCommand(interaction: any): Promise<void> {
       for (const chunk of chunks.slice(1)) {
         await interaction.followUp(chunk);
       }
+      // Follow up with the full route map (Eglinton flagged) so the line's
+      // 25 stations are always one command away. Best-effort.
+      try {
+        const stations = await getLine5Stations();
+        if (stations.length) {
+          await interaction.followUp({
+            content: `Line 5 Eglinton — all ${stations.length} stations.`,
+            files: [await makeLine5RouteMapAttachment(stations, data.eglinton?.stopId)]
+          });
+        }
+      } catch (error) {
+        console.error("Failed to post Line 5 route map for status", error);
+      }
       return;
     }
 
@@ -380,6 +394,17 @@ async function handleLine5BoardDirectionSelect(interaction: any): Promise<void> 
     files: [await makeDepartureBoardAttachment(session, vehicles)]
   });
   await upsertDepartureBoard(interaction.guildId, { ...session, messageId: message.id });
+  // Post the Line 5 route map (with this station flagged) once on creation so
+  // riders see the whole line and where they're boarding. Best-effort: never let
+  // a map render failure break the board itself.
+  try {
+    await thread.send({
+      content: `Line 5 Eglinton route — boarding at **${stationName}** (${direction}).`,
+      files: [await makeLine5RouteMapAttachment(stations, stopId, direction)]
+    });
+  } catch (error) {
+    console.error("Failed to post Line 5 route map", error);
+  }
   await interaction.editReply({
     content: `Created live Line 5 departure board thread: <#${thread.id}>`,
     components: []
