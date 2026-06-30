@@ -8,8 +8,10 @@ name: Deploy to docker host
 # Trigger it manually ("Run workflow") once the host is back online, or on push to
 # main. Secrets are write-only in GitHub: their values exist only inside this run.
 #
-# Required repo secrets: METROLINX_API_KEY, DISCORD_TOKEN, DISCORD_CLIENT_ID.
-# Optional: DISCORD_GUILD_ID, ALERT_CHANNEL_ID, GENERAL_CHANNEL_ID.
+# Secret: SECRETS_ENCRYPTION_KEY (master key, decrypts the ENC_* variables) plus
+#   DISCORD_TOKEN, DISCORD_CLIENT_ID.
+# Variable: ENC_METROLINX_API_KEY (AES-256-GCM ciphertext, see the api-key-vault skill).
+# Optional secrets: DISCORD_GUILD_ID, ALERT_CHANNEL_ID, GENERAL_CHANNEL_ID.
 
 on:
   workflow_dispatch: {}
@@ -27,10 +29,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Write .env from secrets (ephemeral, never committed)
+      - name: Write .env from secrets + encrypted vars (ephemeral, never committed)
         shell: bash
+        env:
+          SECRETS_ENCRYPTION_KEY: ${{ secrets.SECRETS_ENCRYPTION_KEY }}
+          ENC_METROLINX_API_KEY: ${{ vars.ENC_METROLINX_API_KEY }}
         run: |
           umask 077
+          # Decrypt the Metrolinx key from its encrypted variable (api-key-vault scheme).
+          METROLINX_API_KEY="$(node scripts/vault.mjs decrypt "$ENC_METROLINX_API_KEY")"
           cat > .env <<EOF
           DISCORD_TOKEN=${{ secrets.DISCORD_TOKEN }}
           DISCORD_CLIENT_ID=${{ secrets.DISCORD_CLIENT_ID }}
@@ -38,7 +45,7 @@ jobs:
           ALERT_CHANNEL_ID=${{ secrets.ALERT_CHANNEL_ID }}
           GENERAL_CHANNEL_ID=${{ secrets.GENERAL_CHANNEL_ID }}
           AUTO_SETUP_CHANNELS=true
-          METROLINX_API_KEY=${{ secrets.METROLINX_API_KEY }}
+          METROLINX_API_KEY=${METROLINX_API_KEY}
           EOF
           echo "Wrote .env with $(grep -c '=' .env) keys (values masked)."
 
